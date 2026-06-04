@@ -5,6 +5,8 @@
     <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; frame-src *; img-src * data:;">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Феон на связи</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2E7D32">
     <style>
         * {
             box-sizing: border-box;
@@ -51,46 +53,120 @@
             padding: 40px 20px;
         }
 
+        .status-line {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4CAF50;
+            box-shadow: 0 0 12px rgba(76, 175, 80, 0.8);
+            transition: background 0.5s, box-shadow 0.5s;
+            flex-shrink: 0;
+        }
+
+        .indicator.offline {
+            background: #f44336;
+            box-shadow: 0 0 12px rgba(244, 67, 54, 0.8);
+            animation: pulse-red 1.5s infinite;
+        }
+
+        .indicator.loading {
+            background: #ff9800;
+            box-shadow: 0 0 12px rgba(255, 152, 0, 0.8);
+            animation: pulse-yellow 1s infinite;
+        }
+
+        @keyframes pulse-red {
+            0%, 100% { box-shadow: 0 0 8px rgba(244, 67, 54, 0.6); }
+            50% { box-shadow: 0 0 20px rgba(244, 67, 54, 1); }
+        }
+
+        @keyframes pulse-yellow {
+            0%, 100% { box-shadow: 0 0 8px rgba(255, 152, 0, 0.6); }
+            50% { box-shadow: 0 0 20px rgba(255, 152, 0, 1); }
+        }
+
         .info h2 {
             font-size: 36px;
             font-weight: 700;
-            margin: 0 0 16px 0;
+            margin: 0;
             color: #ffffff;
             text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
             letter-spacing: 1px;
         }
 
-        .info p {
+        .info .status-text {
+            font-size: 16px;
+            margin: 0 0 20px 0;
+            color: #ffffff;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+            font-weight: 500;
+            min-height: 24px;
+            transition: color 0.5s;
+        }
+
+        .info .status-text.offline-text {
+            color: #ffcdd2;
+        }
+
+        .info .status-text.loading-text {
+            color: #ffe0b2;
+        }
+
+        .info .hint {
             font-size: 18px;
-            margin: 0 0 24px 0;
+            margin: 0 0 16px 0;
             color: #ffffff;
             text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
             line-height: 1.5;
             font-weight: 500;
+            transition: opacity 0.5s;
         }
 
-        /* Место под кнопку чата */
-        .chat-button-area {
-            width: 80px;
-            height: 80px;
-            margin: 0 auto;
-            position: relative;
+        .info .hint.hidden-hint {
+            opacity: 0;
+            height: 0;
+            margin: 0;
+            overflow: hidden;
         }
 
-        /* ПЕРЕМЕЩАЕМ СТАНДАРТНЫЙ ВИДЖЕТ BOTMAN В ЦЕНТР */
-        /* Это воздействует на iframe и кнопку внутри него */
-        body > iframe,
-        iframe[src*="btmn"],
-        iframe[id*="botman"],
-        iframe[id*="webchat"] {
-            position: fixed !important;
-            bottom: 50% !important;
-            right: 50% !important;
-            transform: translate(50%, 50%) !important;
-            z-index: 9999 !important;
+        /* Ссылка на VK */
+        .info .vk-link {
+            display: inline-block;
+            font-size: 16px;
+            color: #ffffff;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+            font-weight: 500;
+            transition: opacity 0.5s;
+            text-decoration: none;
+            padding: 10px 24px;
+            border: 2px solid rgba(255, 255, 255, 0.6);
+            border-radius: 30px;
+            background: rgba(255, 255, 255, 0.1);
         }
 
-        /* Адаптация для мобильных */
+        .info .vk-link:hover {
+            background: rgba(255, 255, 255, 0.2);
+            border-color: #fff;
+        }
+
+        .info .vk-link.hidden-hint {
+            opacity: 0;
+            height: 0;
+            margin: 0;
+            padding: 0;
+            border: none;
+            overflow: hidden;
+        }
+
         @media (max-width: 480px) {
             .info {
                 padding: 30px 16px;
@@ -98,8 +174,12 @@
             .info h2 {
                 font-size: 26px;
             }
-            .info p {
+            .info .hint {
                 font-size: 15px;
+            }
+            .info .vk-link {
+                font-size: 14px;
+                padding: 8px 20px;
             }
         }
     </style>
@@ -107,9 +187,22 @@
 <body>
     <div class="container">
         <div class="info">
-            <h2>Феон на связи 🟢</h2>
-            <p>Нажмите на значок чата ниже, чтобы начать</p>
-            <div class="chat-button-area"></div>
+            <!-- Индикатор и заголовок -->
+            <div class="status-line">
+                <div class="indicator loading" id="indicator"></div>
+                <h2 id="title">Феон</h2>
+            </div>
+            
+            <!-- Статус -->
+            <div class="status-text loading-text" id="statusText">Чат загружается...</div>
+            
+            <!-- Подсказка (зелёный статус) -->
+            <div class="hint hidden-hint" id="hint">Нажми на значок чата, чтобы начать</div>
+            
+            <!-- Ссылка на VK (красный статус) -->
+            <a href="https://vk.ru/club136655585" target="_blank" class="vk-link hidden-hint" id="vkLink">
+                Попробуйте чат в ВК или дождитесь подключения
+            </a>
         </div>
     </div>
 
@@ -118,5 +211,131 @@
       data-webchat-id="185e85da840b"
       async
     ></script>
+
+    <!-- Индикатор сети + загрузки чата -->
+    <script>
+    (function() {
+        var indicator = document.getElementById('indicator');
+        var title = document.getElementById('title');
+        var statusText = document.getElementById('statusText');
+        var hint = document.getElementById('hint');
+        var vkLink = document.getElementById('vkLink');
+        var wasOffline = false;
+        var chatLoaded = false;
+        var checkCount = 0;
+        var maxChecks = 60;
+
+        function setOnline() {
+            wasOffline = false;
+            indicator.classList.remove('offline');
+            vkLink.classList.add('hidden-hint');
+            if (!chatLoaded) {
+                setLoading();
+            }
+        }
+
+        function setLoading() {
+            indicator.classList.remove('offline');
+            indicator.classList.add('loading');
+            title.innerHTML = 'Феон';
+            statusText.textContent = 'Чат загружается...';
+            statusText.classList.remove('offline-text');
+            statusText.classList.add('loading-text');
+            hint.classList.add('hidden-hint');
+            vkLink.classList.add('hidden-hint');
+        }
+
+        function setConnected() {
+            chatLoaded = true;
+            indicator.classList.remove('loading', 'offline');
+            title.innerHTML = 'Феон на связи 🟢';
+            statusText.textContent = 'Соединение установлено';
+            statusText.classList.remove('offline-text', 'loading-text');
+            hint.classList.remove('hidden-hint');
+            vkLink.classList.add('hidden-hint');
+        }
+
+        function setOffline() {
+            wasOffline = true;
+            chatLoaded = false;
+            indicator.classList.add('offline');
+            indicator.classList.remove('loading');
+            title.innerHTML = 'Феон офлайн';
+            statusText.textContent = 'Отсутствует соединение';
+            statusText.classList.add('offline-text');
+            statusText.classList.remove('loading-text');
+            hint.classList.add('hidden-hint');
+            vkLink.classList.remove('hidden-hint');
+        }
+
+        function checkChatLoaded() {
+            var iframes = document.querySelectorAll('iframe');
+            for (var i = 0; i < iframes.length; i++) {
+                if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1) {
+                    return true;
+                }
+            }
+            var widgets = document.querySelectorAll('[id*="botman"], [id*="webchat"], [class*="botman"], [class*="webchat"]');
+            if (widgets.length > 0) return true;
+            return false;
+        }
+
+        if (!navigator.onLine) {
+            setOffline();
+        } else {
+            setLoading();
+        }
+
+        var interval = setInterval(function() {
+            checkCount++;
+
+            if (!navigator.onLine) {
+                if (!wasOffline) setOffline();
+                return;
+            }
+
+            if (wasOffline) {
+                setOnline();
+                location.reload();
+                return;
+            }
+
+            if (!chatLoaded) {
+                if (checkChatLoaded()) {
+                    setConnected();
+                } else if (checkCount >= maxChecks) {
+                    statusText.textContent = 'Чат недоступен. Попробуйте обновить страницу.';
+                    statusText.classList.add('offline-text');
+                    indicator.classList.add('offline');
+                    indicator.classList.remove('loading');
+                    hint.classList.add('hidden-hint');
+                    vkLink.classList.remove('hidden-hint');
+                    clearInterval(interval);
+                }
+            } else {
+                clearInterval(interval);
+                setInterval(function() {
+                    if (!navigator.onLine && !wasOffline) {
+                        setOffline();
+                    } else if (navigator.onLine && wasOffline) {
+                        setOnline();
+                        location.reload();
+                    }
+                }, 10000);
+            }
+        }, 1000);
+
+        window.addEventListener('online', function() {
+            if (wasOffline) {
+                setOnline();
+                location.reload();
+            }
+        });
+
+        window.addEventListener('offline', function() {
+            setOffline();
+        });
+    })();
+    </script>
 </body>
 </html>
