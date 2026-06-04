@@ -16,7 +16,6 @@
             font-family: Arial, sans-serif;
             min-height: 100vh;
             
-            /* Фон */
             background-image: url('https://raw.githubusercontent.com/Feon1/chat/refs/heads/main/background.jpg');
             background-size: cover;
             background-position: center;
@@ -63,27 +62,35 @@
 
         .info p {
             font-size: 18px;
-            margin: 0 0 8px 0;
+            margin: 0 0 24px 0;
             color: #ffffff;
             text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
             line-height: 1.5;
             font-weight: 500;
         }
 
-        .arrow {
-            font-size: 40px;
-            animation: bounce 1.5s infinite;
-            margin-top: 8px;
-            display: block;
-            text-align: right;
-            padding-right: 20px;
+        /* Место под кнопку чата */
+        .chat-button-area {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto;
+            position: relative;
         }
 
-        @keyframes bounce {
-            0%, 100% { transform: translateY(0) translateX(0); }
-            50% { transform: translateY(10px) translateX(10px); }
+        /* ПЕРЕМЕЩАЕМ СТАНДАРТНЫЙ ВИДЖЕТ BOTMAN В ЦЕНТР */
+        /* Это воздействует на iframe и кнопку внутри него */
+        body > iframe,
+        iframe[src*="btmn"],
+        iframe[id*="botman"],
+        iframe[id*="webchat"] {
+            position: fixed !important;
+            bottom: 50% !important;
+            right: 50% !important;
+            transform: translate(50%, 50%) !important;
+            z-index: 9999 !important;
         }
 
+        /* Адаптация для мобильных */
         @media (max-width: 480px) {
             .info {
                 padding: 30px 16px;
@@ -94,10 +101,6 @@
             .info p {
                 font-size: 15px;
             }
-            .arrow {
-                font-size: 32px;
-                padding-right: 10px;
-            }
         }
     </style>
 </head>
@@ -105,9 +108,8 @@
     <div class="container">
         <div class="info">
             <h2>Феон на связи 🟢</h2>
-            <p>Для чата нажмите на значок</p>
-            <p>в правом нижнем углу</p>
-            <div class="arrow">↘️</div>
+            <p>Нажмите на значок чата ниже, чтобы начать</p>
+            <div class="chat-button-area"></div>
         </div>
     </div>
 
