@@ -138,7 +138,6 @@
             overflow: hidden;
         }
 
-        /* Ссылка на VK */
         .info .vk-link {
             display: inline-block;
             font-size: 16px;
@@ -187,19 +186,14 @@
 <body>
     <div class="container">
         <div class="info">
-            <!-- Индикатор и заголовок -->
             <div class="status-line">
                 <div class="indicator loading" id="indicator"></div>
                 <h2 id="title">Феон</h2>
             </div>
             
-            <!-- Статус -->
             <div class="status-text loading-text" id="statusText">Чат загружается...</div>
-            
-            <!-- Подсказка (зелёный статус) -->
             <div class="hint hidden-hint" id="hint">Нажми на значок чата, чтобы начать</div>
             
-            <!-- Ссылка на VK (красный статус) -->
             <a href="https://vk.com/club136655585" target="_blank" class="vk-link hidden-hint" id="vkLink">
                 Попробуйте чат в ВК или дождитесь подключения
             </a>
@@ -212,7 +206,6 @@
       async
     ></script>
 
-    <!-- Индикатор сети + загрузки чата + защита от падения -->
     <script>
     (function() {
         var indicator = document.getElementById('indicator');
@@ -224,16 +217,6 @@
         var chatLoaded = false;
         var checkCount = 0;
         var maxChecks = 60;
-        var reloadOnReconnect = true;
-
-        function setOnline() {
-            wasOffline = false;
-            indicator.classList.remove('offline');
-            vkLink.classList.add('hidden-hint');
-            if (!chatLoaded) {
-                setLoading();
-            }
-        }
 
         function setLoading() {
             indicator.classList.remove('offline');
@@ -248,6 +231,7 @@
 
         function setConnected() {
             chatLoaded = true;
+            wasOffline = false;
             indicator.classList.remove('loading', 'offline');
             title.innerHTML = 'Феон на связи';
             statusText.textContent = 'Соединение установлено';
@@ -276,113 +260,79 @@
                     return true;
                 }
             }
-            var widgets = document.querySelectorAll('[id*="botman"], [id*="webchat"], [class*="botman"], [class*="webchat"]');
-            if (widgets.length > 0) return true;
             return false;
         }
 
-        // Начальная установка
-        if (!navigator.onLine) {
-            setOffline();
-        } else {
-            setLoading();
-        }
-
-        // Пинг-проверка: пытаемся загрузить крошечный файл, чтобы проверить реальное соединение
-        function pingServer() {
+        // Пинг сервера
+        function pingServer(callback) {
             var xhr = new XMLHttpRequest();
             xhr.open('HEAD', 'https://feon1.github.io/chat/manifest.json?t=' + Date.now(), true);
-            xhr.timeout = 3000;
+            xhr.timeout = 5000;
             xhr.onload = function() {
-                if (!wasOffline) return;
-                // Сервер доступен — восстанавливаемся
-                if (reloadOnReconnect) {
-                    location.reload();
-                }
+                callback(true);
             };
             xhr.onerror = function() {
-                if (!wasOffline) setOffline();
+                callback(false);
             };
             xhr.ontimeout = function() {
-                if (!wasOffline) setOffline();
+                callback(false);
             };
             try {
                 xhr.send();
             } catch(e) {
-                if (!wasOffline) setOffline();
+                callback(false);
             }
         }
 
-        // Основной цикл
-        var interval = setInterval(function() {
-            checkCount++;
+        // Регистрация Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/chat/sw.js').catch(function() {});
+        }
 
-            // Быстрая проверка через navigator
-            if (!navigator.onLine) {
-                if (!wasOffline) setOffline();
-                return;
-            }
-
-            // Если считаем, что офлайн — пингуем сервер
-            if (wasOffline) {
-                pingServer();
-                return;
-            }
-
-            // Онлайн — проверяем загрузку чата
-            if (!chatLoaded) {
-                if (checkChatLoaded()) {
-                    setConnected();
-                } else if (checkCount >= maxChecks) {
-                    statusText.textContent = 'Чат недоступен. Попробуйте обновить страницу.';
-                    statusText.classList.add('offline-text');
-                    indicator.classList.add('offline');
-                    indicator.classList.remove('loading');
-                    hint.classList.add('hidden-hint');
-                    vkLink.classList.remove('hidden-hint');
-                    clearInterval(interval);
-                }
+        // Начальная установка — проверяем реальное соединение
+        pingServer(function(online) {
+            if (online) {
+                setLoading();
             } else {
-                clearInterval(interval);
-                // Редкая проверка
-                setInterval(function() {
-                    if (!navigator.onLine) {
-                        if (!wasOffline) setOffline();
-                    } else if (wasOffline) {
-                        pingServer();
-                    }
-                }, 10000);
+                setOffline();
             }
-        }, 1000);
+        });
 
-        // Обработчики событий
+        // Основной цикл
+        setInterval(function() {
+            pingServer(function(online) {
+                if (!online && !wasOffline) {
+                    setOffline();
+                } else if (online && wasOffline) {
+                    // Интернет появился — перезагружаем
+                    location.reload();
+                } else if (online && !chatLoaded && !wasOffline) {
+                    checkCount++;
+                    if (checkChatLoaded()) {
+                        setConnected();
+                    } else if (checkCount >= maxChecks) {
+                        statusText.textContent = 'Чат недоступен. Попробуйте обновить страницу.';
+                        statusText.classList.add('offline-text');
+                        indicator.classList.add('offline');
+                        indicator.classList.remove('loading');
+                        hint.classList.add('hidden-hint');
+                        vkLink.classList.remove('hidden-hint');
+                    }
+                }
+            });
+        }, 3000);
+
+        // События
         window.addEventListener('online', function() {
-            if (wasOffline) {
-                pingServer();
-            }
+            pingServer(function(online) {
+                if (online && wasOffline) {
+                    location.reload();
+                }
+            });
         });
 
         window.addEventListener('offline', function() {
             setOffline();
-        });
-
-        // Перехват ошибок загрузки (страница не падает)
-        window.addEventListener('error', function(e) {
-            if (e.target && e.target.tagName === 'SCRIPT' && e.target.src.indexOf('btmn') !== -1) {
-                // Скрипт чата не загрузился — не страшно, страница работает
-                e.preventDefault();
-                return false;
-            }
-        }, true);
-
-        // Предотвращаем уход со страницы при ошибке сети
-        window.addEventListener('beforeunload', function(e) {
-            if (wasOffline) {
-                // Не даём браузеру показать свою ошибку
-                e.preventDefault();
-                e.returnValue = '';
-                return '';
-            }
         });
     })();
     </script>
