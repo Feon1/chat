@@ -212,7 +212,7 @@
       async
     ></script>
 
-    <!-- Индикатор сети + загрузки чата -->
+    <!-- Индикатор сети + загрузки чата + защита от падения -->
     <script>
     (function() {
         var indicator = document.getElementById('indicator');
@@ -224,6 +224,7 @@
         var chatLoaded = false;
         var checkCount = 0;
         var maxChecks = 60;
+        var reloadOnReconnect = true;
 
         function setOnline() {
             wasOffline = false;
@@ -280,26 +281,55 @@
             return false;
         }
 
+        // Начальная установка
         if (!navigator.onLine) {
             setOffline();
         } else {
             setLoading();
         }
 
+        // Пинг-проверка: пытаемся загрузить крошечный файл, чтобы проверить реальное соединение
+        function pingServer() {
+            var xhr = new XMLHttpRequest();
+            xhr.open('HEAD', 'https://feon1.github.io/chat/manifest.json?t=' + Date.now(), true);
+            xhr.timeout = 3000;
+            xhr.onload = function() {
+                if (!wasOffline) return;
+                // Сервер доступен — восстанавливаемся
+                if (reloadOnReconnect) {
+                    location.reload();
+                }
+            };
+            xhr.onerror = function() {
+                if (!wasOffline) setOffline();
+            };
+            xhr.ontimeout = function() {
+                if (!wasOffline) setOffline();
+            };
+            try {
+                xhr.send();
+            } catch(e) {
+                if (!wasOffline) setOffline();
+            }
+        }
+
+        // Основной цикл
         var interval = setInterval(function() {
             checkCount++;
 
+            // Быстрая проверка через navigator
             if (!navigator.onLine) {
                 if (!wasOffline) setOffline();
                 return;
             }
 
+            // Если считаем, что офлайн — пингуем сервер
             if (wasOffline) {
-                setOnline();
-                location.reload();
+                pingServer();
                 return;
             }
 
+            // Онлайн — проверяем загрузку чата
             if (!chatLoaded) {
                 if (checkChatLoaded()) {
                     setConnected();
@@ -314,26 +344,45 @@
                 }
             } else {
                 clearInterval(interval);
+                // Редкая проверка
                 setInterval(function() {
-                    if (!navigator.onLine && !wasOffline) {
-                        setOffline();
-                    } else if (navigator.onLine && wasOffline) {
-                        setOnline();
-                        location.reload();
+                    if (!navigator.onLine) {
+                        if (!wasOffline) setOffline();
+                    } else if (wasOffline) {
+                        pingServer();
                     }
                 }, 10000);
             }
         }, 1000);
 
+        // Обработчики событий
         window.addEventListener('online', function() {
             if (wasOffline) {
-                setOnline();
-                location.reload();
+                pingServer();
             }
         });
 
         window.addEventListener('offline', function() {
             setOffline();
+        });
+
+        // Перехват ошибок загрузки (страница не падает)
+        window.addEventListener('error', function(e) {
+            if (e.target && e.target.tagName === 'SCRIPT' && e.target.src.indexOf('btmn') !== -1) {
+                // Скрипт чата не загрузился — не страшно, страница работает
+                e.preventDefault();
+                return false;
+            }
+        }, true);
+
+        // Предотвращаем уход со страницы при ошибке сети
+        window.addEventListener('beforeunload', function(e) {
+            if (wasOffline) {
+                // Не даём браузеру показать свою ошибку
+                e.preventDefault();
+                e.returnValue = '';
+                return '';
+            }
         });
     })();
     </script>
