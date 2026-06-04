@@ -24,7 +24,6 @@
             background-attachment: fixed;
         }
 
-        /* Затемнение */
         body::before {
             content: '';
             position: fixed;
@@ -64,52 +63,27 @@
 
         .info p {
             font-size: 18px;
-            margin: 0 0 24px 0;
+            margin: 0 0 8px 0;
             color: #ffffff;
             text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
             line-height: 1.5;
             font-weight: 500;
         }
 
-        /* Кнопка чата */
-        .chat-button {
-            display: inline-block;
-            padding: 16px 40px;
-            font-size: 18px;
-            font-weight: 600;
-            color: #fff;
-            background: linear-gradient(135deg, #4CAF50, #2E7D32);
-            border: none;
-            border-radius: 50px;
-            cursor: pointer;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-            transition: transform 0.2s, box-shadow 0.2s;
-            text-decoration: none;
-            letter-spacing: 0.5px;
+        .arrow {
+            font-size: 40px;
+            animation: bounce 1.5s infinite;
+            margin-top: 8px;
+            display: block;
+            text-align: right;
+            padding-right: 20px;
         }
 
-        .chat-button:hover {
-            transform: scale(1.05);
-            box-shadow: 0 6px 25px rgba(0, 0, 0, 0.5);
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0) translateX(0); }
+            50% { transform: translateY(10px) translateX(10px); }
         }
 
-        .chat-button:active {
-            transform: scale(0.98);
-        }
-
-        /* Скрываем стандартный значок BotMan */
-        iframe[src*="btmn"] {
-            opacity: 0 !important;
-            pointer-events: none !important;
-        }
-
-        /* Когда чат открыт — показываем */
-        .chat-open iframe[src*="btmn"] {
-            opacity: 1 !important;
-            pointer-events: auto !important;
-        }
-
-        /* Адаптация для мобильных */
         @media (max-width: 480px) {
             .info {
                 padding: 30px 16px;
@@ -120,9 +94,9 @@
             .info p {
                 font-size: 15px;
             }
-            .chat-button {
-                padding: 14px 32px;
-                font-size: 16px;
+            .arrow {
+                font-size: 32px;
+                padding-right: 10px;
             }
         }
     </style>
@@ -131,10 +105,9 @@
     <div class="container">
         <div class="info">
             <h2>Феон на связи 🟢</h2>
-            <p>Готовы ответить на ваши вопросы</p>
-            <button class="chat-button" onclick="openChat()">
-                💬 Написать в чат
-            </button>
+            <p>Для чата нажмите на значок</p>
+            <p>в правом нижнем углу</p>
+            <div class="arrow">↘️</div>
         </div>
     </div>
 
@@ -143,24 +116,5 @@
       data-webchat-id="185e85da840b"
       async
     ></script>
-
-    <script>
-    function openChat() {
-        // Пробуем найти и кликнуть по кнопке BotMan
-        setTimeout(function() {
-            var chatIframe = document.querySelector('iframe[src*="btmn"]');
-            if (chatIframe) {
-                // Делаем iframe видимым и кликабельным
-                document.body.classList.add('chat-open');
-                
-                // Пробуем сфокусироваться на iframe
-                chatIframe.focus();
-                
-                // Отправляем сообщение в iframe (если BotMan поддерживает)
-                chatIframe.contentWindow.postMessage({ type: 'open' }, '*');
-            }
-        }, 500);
-    }
-    </script>
 </body>
 </html>
