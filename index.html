@@ -215,8 +215,8 @@
         var vkLink = document.getElementById('vkLink');
         var wasOffline = false;
         var chatLoaded = false;
-        var checkCount = 0;
-        var maxChecks = 60;
+        var chatCheckCount = 0;
+        var maxChatChecks = 30;
 
         function setLoading() {
             indicator.classList.remove('offline');
@@ -254,14 +254,43 @@
         }
 
         function checkChatLoaded() {
+            // Проверяем iframe с btmn
             var iframes = document.querySelectorAll('iframe');
             for (var i = 0; i < iframes.length; i++) {
                 if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1) {
                     return true;
                 }
             }
+            // Проверяем элементы BotMan в DOM
+            var elements = document.querySelectorAll('[id*="botman"], [id*="webchat"], [class*="botman"], [class*="webchat"], [data-webchat-id]');
+            if (elements.length > 0) return true;
             return false;
         }
+
+        // Отдельный цикл ТОЛЬКО для проверки загрузки чата
+        var chatInterval = setInterval(function() {
+            if (chatLoaded) {
+                clearInterval(chatInterval);
+                return;
+            }
+            if (wasOffline) return; // Не проверяем если офлайн
+            
+            chatCheckCount++;
+            if (checkChatLoaded()) {
+                setConnected();
+                clearInterval(chatInterval);
+            } else if (chatCheckCount >= maxChatChecks) {
+                // Не загрузился за 30 секунд
+                statusText.textContent = 'Чат недоступен. Попробуйте обновить страницу.';
+                statusText.classList.add('offline-text');
+                statusText.classList.remove('loading-text');
+                indicator.classList.add('offline');
+                indicator.classList.remove('loading');
+                hint.classList.add('hidden-hint');
+                vkLink.classList.remove('hidden-hint');
+                clearInterval(chatInterval);
+            }
+        }, 1000);
 
         // Пинг сервера
         function pingServer(callback) {
@@ -284,51 +313,38 @@
             }
         }
 
-        // Регистрация Service Worker
+        // Service Worker
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('/chat/sw.js').catch(function() {});
         }
 
-        // Начальная установка — проверяем реальное соединение
+        // Начальная проверка
         pingServer(function(online) {
-            if (online) {
-                setLoading();
-            } else {
+            if (!online) {
                 setOffline();
             }
         });
 
-        // Основной цикл
+        // Проверка соединения каждые 5 секунд
         setInterval(function() {
             pingServer(function(online) {
                 if (!online && !wasOffline) {
                     setOffline();
                 } else if (online && wasOffline) {
-                    // Интернет появился — перезагружаем
                     location.reload();
-                } else if (online && !chatLoaded && !wasOffline) {
-                    checkCount++;
-                    if (checkChatLoaded()) {
-                        setConnected();
-                    } else if (checkCount >= maxChecks) {
-                        statusText.textContent = 'Чат недоступен. Попробуйте обновить страницу.';
-                        statusText.classList.add('offline-text');
-                        indicator.classList.add('offline');
-                        indicator.classList.remove('loading');
-                        hint.classList.add('hidden-hint');
-                        vkLink.classList.remove('hidden-hint');
-                    }
                 }
             });
-        }, 3000);
+        }, 5000);
 
         // События
         window.addEventListener('online', function() {
-            pingServer(function(online) {
-                if (online && wasOffline) {
-                    location.reload();
-                }
-            });
+            setTimeout(function() {
+                pingServer(function(online) {
+                    if (online && wasOffline) {
+                        location.reload();
+                    }
+                });
+            }, 1000);
         });
 
         window.addEventListener('offline', function() {
