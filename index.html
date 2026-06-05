@@ -193,6 +193,8 @@
             chatLoaded = false;
             indicator.classList.add('offline');
             indicator.classList.remove('loading');
+            indicator.style.background = '#f44336';
+            indicator.style.boxShadow = '0 0 12px rgba(244, 67, 54, 0.8)';
             title.innerHTML = 'Феон офлайн';
             statusText.textContent = 'Отсутствует соединение';
             statusText.classList.add('offline-text');
@@ -203,6 +205,8 @@
         function setLoading() {
             indicator.classList.remove('offline');
             indicator.classList.add('loading');
+            indicator.style.background = '#ff9800';
+            indicator.style.boxShadow = '0 0 12px rgba(255, 152, 0, 0.8)';
             title.innerHTML = 'Феон';
             statusText.textContent = 'Чат загружается...';
             statusText.classList.remove('offline-text');
@@ -257,6 +261,8 @@
                 statusText.classList.add('offline-text');
                 indicator.classList.add('offline');
                 indicator.classList.remove('loading');
+                indicator.style.background = '#f44336';
+                indicator.style.boxShadow = '0 0 12px rgba(244, 67, 54, 0.8)';
                 clearInterval(chatInterval);
             }
         }, 1000);
