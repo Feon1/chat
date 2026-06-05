@@ -199,7 +199,7 @@
 
     <a href="mailto:feon5upport@ya.ru" class="footer-email">support:feon5upport@ya.ru</a>
 
-    <script>
+        <script>
     (function() {
         var indicator = document.getElementById('indicator');
         var title = document.getElementById('title');
@@ -208,6 +208,12 @@
         var vkButton = document.getElementById('vkButton');
         var wasOffline = false;
         var widgetFound = false;
+
+        // Определяем тип соединения
+        var connectionType = 'unknown';
+        if (navigator.connection) {
+            connectionType = navigator.connection.effectiveType || navigator.connection.type || 'unknown';
+        }
 
         function setConnected() {
             widgetFound = true;
@@ -225,7 +231,7 @@
             if (widgetFound) return true;
             
             // Проверяем глобальный объект BotMan
-            if (typeof window.BotmanWebChat !== 'undefined' || window.BotmanWebChat) {
+            if (typeof window.BotmanWebChat !== 'undefined' && window.BotmanWebChat) {
                 setConnected();
                 return true;
             }
@@ -256,7 +262,16 @@
             indicator.style.background = '#ff9800';
             indicator.style.boxShadow = '0 0 12px rgba(255, 152, 0, 0.8)';
             title.innerHTML = 'Феон на связи';
-            statusText.textContent = 'Нестабильное соединение';
+            
+            // Показываем тип соединения
+            var connText = '';
+            if (connectionType === 'cellular' || connectionType === '4g' || connectionType === '3g' || connectionType === '2g') {
+                connText = ' (мобильный интернет)';
+            } else if (connectionType === 'wifi') {
+                connText = ' (Wi-Fi)';
+            }
+            
+            statusText.textContent = 'Нестабильное соединение' + connText;
             statusText.classList.remove('offline-text');
             statusText.classList.add('loading-text');
             hintText.classList.add('hidden');
