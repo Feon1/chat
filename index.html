@@ -199,131 +199,124 @@
 
     <a href="mailto:feon5upport@ya.ru" class="footer-email">support:feon5upport@ya.ru</a>
 
-    <script>
-    (function() {
-        // Очистка
-        try { localStorage.clear(); } catch(e) {}
-        try { sessionStorage.clear(); } catch(e) {}
-        var cookies = document.cookie.split(';');
-        for (var i = 0; i < cookies.length; i++) {
-            var cookie = cookies[i];
-            var eqPos = cookie.indexOf('=');
-            var name = eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
-            document.cookie = name + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
-            document.cookie = name + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/chat/';
-        }
+      <script>
+(function() {
+    var indicator = document.getElementById('indicator');
+    var title = document.getElementById('title');
+    var statusText = document.getElementById('statusText');
+    var hintText = document.getElementById('hintText');
+    var vkButton = document.getElementById('vkButton');
+    var wasOffline = false;
+    var widgetFound = false;
 
-        var indicator = document.getElementById('indicator');
-        var title = document.getElementById('title');
-        var statusText = document.getElementById('statusText');
-        var hintText = document.getElementById('hintText');
-        var vkButton = document.getElementById('vkButton');
-        var wasOffline = false;
-        var widgetFound = false;
-
-        function checkWidget() {
-            if (widgetFound) return;
-            var iframes = document.querySelectorAll('iframe');
-            for (var i = 0; i < iframes.length; i++) {
-                if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1) {
-                    widgetFound = true;
-                    indicator.classList.remove('loading', 'offline');
-                    indicator.style.background = '#4CAF50';
-                    indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
-                    title.innerHTML = 'Феон на связи';
-                    statusText.textContent = 'Соединение установлено';
-                    statusText.classList.remove('offline-text', 'loading-text');
-                    hintText.classList.remove('hidden');
-                    vkButton.classList.add('hidden');
-                    return;
-                }
+    function checkWidget() {
+        if (widgetFound) return true;
+        var iframes = document.querySelectorAll('iframe');
+        for (var i = 0; i < iframes.length; i++) {
+            if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1) {
+                widgetFound = true;
+                indicator.classList.remove('loading', 'offline');
+                indicator.style.background = '#4CAF50';
+                indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
+                title.innerHTML = 'Феон на связи';
+                statusText.textContent = 'Соединение установлено';
+                statusText.classList.remove('offline-text', 'loading-text');
+                hintText.classList.remove('hidden');
+                vkButton.classList.add('hidden');
+                return true;
             }
         }
+        return false;
+    }
 
-        function showOnlineNoBotman() {
-            indicator.classList.remove('loading', 'offline');
-            indicator.style.background = '#4CAF50';
-            indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
-            title.innerHTML = 'Феон на связи';
-            statusText.textContent = 'Соединение установлено';
-            statusText.classList.remove('offline-text', 'loading-text');
-            hintText.classList.add('hidden');
-            vkButton.classList.remove('hidden');
+    function showOnlineNoBotman() {
+        indicator.classList.remove('loading', 'offline');
+        indicator.style.background = '#4CAF50';
+        indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
+        title.innerHTML = 'Феон на связи';
+        statusText.textContent = 'Соединение установлено';
+        statusText.classList.remove('offline-text', 'loading-text');
+        hintText.classList.add('hidden');
+        vkButton.classList.remove('hidden');
+    }
+
+    function showOffline() {
+        wasOffline = true;
+        indicator.classList.add('offline');
+        indicator.classList.remove('loading');
+        indicator.style.background = '#f44336';
+        indicator.style.boxShadow = '0 0 12px rgba(244, 67, 54, 0.8)';
+        title.innerHTML = 'Феон офлайн';
+        statusText.textContent = 'Отсутствует соединение';
+        statusText.classList.add('offline-text');
+        statusText.classList.remove('loading-text');
+        hintText.classList.add('hidden');
+        vkButton.classList.add('hidden');
+    }
+
+    function pingInternet(callback) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('HEAD', 'https://feon1.github.io/chat/index.html?nocache=' + Date.now(), true);
+        xhr.timeout = 5000;
+        xhr.onload = function() { callback(true); };
+        xhr.onerror = function() { callback(false); };
+        xhr.ontimeout = function() { callback(false); };
+        try { xhr.send(); } catch(e) { callback(false); }
+    }
+
+    // Старт
+    pingInternet(function(online) {
+        if (!online) {
+            showOffline();
+            return;
         }
+        statusText.textContent = 'Чат загружается...';
+        statusText.classList.add('loading-text');
+    });
 
-        function showOffline() {
-            wasOffline = true;
-            indicator.classList.add('offline');
-            indicator.classList.remove('loading');
-            indicator.style.background = '#f44336';
-            indicator.style.boxShadow = '0 0 12px rgba(244, 67, 54, 0.8)';
-            title.innerHTML = 'Феон офлайн';
-            statusText.textContent = 'Отсутствует соединение';
-            statusText.classList.add('offline-text');
-            statusText.classList.remove('loading-text');
-            hintText.classList.add('hidden');
-            vkButton.classList.add('hidden');
+    // Проверяем виджет — сначала каждую секунду, потом раз в 3 секунды
+    var checkCount = 0;
+    var widgetInterval = setInterval(function() {
+        if (wasOffline) return;
+        if (checkWidget()) {
+            clearInterval(widgetInterval);
+        } else {
+            checkCount++;
+            // После 60 проверок (60 секунд) показываем кнопку ВК, но продолжаем проверять
+            if (checkCount === 60) {
+                showOnlineNoBotman();
+            }
+            // После 60 проверок замедляемся до 3 секунд
+            if (checkCount > 60 && checkCount % 3 !== 0) {
+                // пропускаем, проверяем каждые 3 секунды
+            }
         }
+    }, 1000);
 
-        function pingInternet(callback) {
-            var xhr = new XMLHttpRequest();
-            xhr.open('HEAD', 'https://feon1.github.io/chat/index.html?nocache=' + Date.now(), true);
-            xhr.timeout = 5000;
-            xhr.onload = function() { callback(true); };
-            xhr.onerror = function() { callback(false); };
-            xhr.ontimeout = function() { callback(false); };
-            try { xhr.send(); } catch(e) { callback(false); }
-        }
-
-        // Старт
+    // Проверка сети
+    setInterval(function() {
         pingInternet(function(online) {
-            if (!online) {
+            if (!online && !wasOffline) {
                 showOffline();
-                return;
+            } else if (online && wasOffline) {
+                location.reload();
             }
-            statusText.textContent = 'Чат загружается...';
-            statusText.classList.add('loading-text');
         });
+    }, 5000);
 
-        // Проверяем виджет каждую секунду
-        var checkCount = 0;
-        var widgetInterval = setInterval(function() {
-            if (wasOffline) return;
-            checkWidget();
-            if (widgetFound) {
-                clearInterval(widgetInterval);
-            } else {
-                checkCount++;
-                if (checkCount >= 30) {
-                    clearInterval(widgetInterval);
-                    if (!widgetFound) {
-                        showOnlineNoBotman();
-                    }
-                }
-            }
-        }, 1000);
-
-        // Проверка сети
-        setInterval(function() {
+    window.addEventListener('offline', function() { showOffline(); });
+    window.addEventListener('online', function() {
+        setTimeout(function() {
             pingInternet(function(online) {
-                if (!online && !wasOffline) {
-                    showOffline();
-                } else if (online && wasOffline) {
-                    location.reload();
-                }
+                if (online && wasOffline) location.reload();
             });
-        }, 5000);
+        }, 1000);
+    });
+})();
+</script>
 
-        window.addEventListener('offline', function() { showOffline(); });
-        window.addEventListener('online', function() {
-            setTimeout(function() {
-                pingInternet(function(online) {
-                    if (online && wasOffline) location.reload();
-                });
-            }, 1000);
-        });
-    })();
-    </script>
+<!-- Виджет BotMan -->
+<script src="https://cdn.btmn.io/webchat/v1/loader.js" data-webchat-id="185e85da840b" async></script>
 
     <!-- Виджет BotMan -->
     <script src="https://cdn.btmn.io/webchat/v1/loader.js" data-webchat-id="185e85da840b" async></script>
