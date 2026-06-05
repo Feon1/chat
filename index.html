@@ -102,7 +102,7 @@
 
         .info .status-text {
             font-size: 16px;
-            margin: 0 0 20px 0;
+            margin: 0 0 8px 0;
             color: #ffffff;
             text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
             font-weight: 500;
@@ -115,6 +115,15 @@
 
         .info .status-text.loading-text {
             color: #ffe0b2;
+        }
+
+        .info .hint-text {
+            font-size: 14px;
+            margin: 0 0 16px 0;
+            color: #ffffff;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+            font-weight: 500;
+            min-height: 20px;
         }
 
         .chat-button {
@@ -138,6 +147,25 @@
             display: none;
         }
 
+        /* Email внизу */
+        .footer-email {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 2;
+            font-size: 14px;
+            color: #ffffff;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+            font-weight: 500;
+            text-decoration: none;
+            opacity: 0.8;
+        }
+
+        .footer-email:hover {
+            opacity: 1;
+        }
+
         @media (max-width: 480px) {
             .info h2 {
                 font-size: 26px;
@@ -145,6 +173,10 @@
             .chat-button {
                 font-size: 16px;
                 padding: 14px 28px;
+            }
+            .footer-email {
+                font-size: 12px;
+                bottom: 12px;
             }
         }
     </style>
@@ -159,11 +191,16 @@
             
             <div class="status-text loading-text" id="statusText">Чат загружается...</div>
             
+            <div class="hint-text hidden" id="hintText">Нажмите на значок чата</div>
+            
             <a href="https://vk.com/club136655585" target="_blank" class="chat-button" id="vkButton">
                 💬 Написать в ВК
             </a>
         </div>
     </div>
+
+    <!-- Email внизу -->
+    <a href="mailto:feon5upport@ya.ru" class="footer-email">support:feon5upport@ya.ru</a>
 
     <script src="https://cdn.btmn.io/webchat/v1/loader.js" data-webchat-id="185e85da840b" async></script>
 
@@ -172,6 +209,7 @@
         var indicator = document.getElementById('indicator');
         var title = document.getElementById('title');
         var statusText = document.getElementById('statusText');
+        var hintText = document.getElementById('hintText');
         var vkButton = document.getElementById('vkButton');
         var wasOffline = false;
         var chatLoaded = false;
@@ -185,6 +223,7 @@
             title.innerHTML = 'Феон на связи';
             statusText.textContent = 'Соединение установлено';
             statusText.classList.remove('offline-text', 'loading-text');
+            hintText.classList.remove('hidden');
             vkButton.classList.add('hidden');
         }
 
@@ -199,6 +238,7 @@
             statusText.textContent = 'Отсутствует соединение';
             statusText.classList.add('offline-text');
             statusText.classList.remove('loading-text');
+            hintText.classList.add('hidden');
             vkButton.classList.remove('hidden');
         }
 
@@ -211,6 +251,7 @@
             statusText.textContent = 'Чат загружается...';
             statusText.classList.remove('offline-text');
             statusText.classList.add('loading-text');
+            hintText.classList.add('hidden');
             vkButton.classList.remove('hidden');
         }
 
@@ -259,6 +300,7 @@
             } else if (checkCount >= 15) {
                 statusText.textContent = 'Напишите нам в ВК';
                 statusText.classList.add('offline-text');
+                hintText.classList.add('hidden');
                 indicator.classList.add('offline');
                 indicator.classList.remove('loading');
                 indicator.style.background = '#f44336';
