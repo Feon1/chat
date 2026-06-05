@@ -201,7 +201,7 @@
 
     <script>
     (function() {
-        // ====== ОЧИСТКА КЭША, КУК, ХРАНИЛИЩ ======
+        // Очистка
         try { localStorage.clear(); } catch(e) {}
         try { sessionStorage.clear(); } catch(e) {}
         var cookies = document.cookie.split(';');
@@ -219,21 +219,28 @@
         var hintText = document.getElementById('hintText');
         var vkButton = document.getElementById('vkButton');
         var wasOffline = false;
+        var widgetFound = false;
 
-        function showOnlineWithChat() {
-            wasOffline = false;
-            indicator.classList.remove('loading', 'offline');
-            indicator.style.background = '#4CAF50';
-            indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
-            title.innerHTML = 'Феон на связи';
-            statusText.textContent = 'Соединение установлено';
-            statusText.classList.remove('offline-text', 'loading-text');
-            hintText.classList.remove('hidden');
-            vkButton.classList.add('hidden');
+        function checkWidget() {
+            if (widgetFound) return;
+            var iframes = document.querySelectorAll('iframe');
+            for (var i = 0; i < iframes.length; i++) {
+                if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1) {
+                    widgetFound = true;
+                    indicator.classList.remove('loading', 'offline');
+                    indicator.style.background = '#4CAF50';
+                    indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
+                    title.innerHTML = 'Феон на связи';
+                    statusText.textContent = 'Соединение установлено';
+                    statusText.classList.remove('offline-text', 'loading-text');
+                    hintText.classList.remove('hidden');
+                    vkButton.classList.add('hidden');
+                    return;
+                }
+            }
         }
 
         function showOnlineNoBotman() {
-            wasOffline = false;
             indicator.classList.remove('loading', 'offline');
             indicator.style.background = '#4CAF50';
             indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
@@ -258,33 +265,6 @@
             vkButton.classList.add('hidden');
         }
 
-        function showLoading() {
-            indicator.classList.remove('offline');
-            indicator.classList.add('loading');
-            indicator.style.background = '#ff9800';
-            indicator.style.boxShadow = '0 0 12px rgba(255, 152, 0, 0.8)';
-            title.innerHTML = 'Феон';
-            statusText.textContent = 'Проверка соединения...';
-            statusText.classList.remove('offline-text');
-            statusText.classList.add('loading-text');
-            hintText.classList.add('hidden');
-            vkButton.classList.add('hidden');
-        }
-
-        function showLoadingChat() {
-            indicator.classList.remove('offline');
-            indicator.classList.add('loading');
-            indicator.style.background = '#ff9800';
-            indicator.style.boxShadow = '0 0 12px rgba(255, 152, 0, 0.8)';
-            title.innerHTML = 'Феон';
-            statusText.textContent = 'Чат загружается...';
-            statusText.classList.remove('offline-text');
-            statusText.classList.add('loading-text');
-            hintText.classList.add('hidden');
-            vkButton.classList.add('hidden');
-        }
-
-        // Пинг интернета
         function pingInternet(callback) {
             var xhr = new XMLHttpRequest();
             xhr.open('HEAD', 'https://feon1.github.io/chat/index.html?nocache=' + Date.now(), true);
@@ -295,77 +275,35 @@
             try { xhr.send(); } catch(e) { callback(false); }
         }
 
-        // Пинг BotMan
-        function pingBotman(callback) {
-            var xhr = new XMLHttpRequest();
-            xhr.open('HEAD', 'https://cdn.btmn.io/webchat/v1/loader.js?nocache=' + Date.now(), true);
-            xhr.timeout = 5000;
-            xhr.onload = function() { callback(true); };
-            xhr.onerror = function() { callback(false); };
-            xhr.ontimeout = function() { callback(false); };
-            try { xhr.send(); } catch(e) { callback(false); }
-        }
-
-        // Загрузка виджета BotMan
-        function loadBotmanWidget() {
-            var oldScript = document.querySelector('script[src*="btmn"]');
-            if (oldScript) oldScript.remove();
-            var oldIframes = document.querySelectorAll('iframe[src*="btmn"]');
-            for (var i = 0; i < oldIframes.length; i++) {
-                oldIframes[i].remove();
-            }
-
-            var script = document.createElement('script');
-            script.src = 'https://cdn.btmn.io/webchat/v1/loader.js?nocache=' + Date.now();
-            script.setAttribute('data-webchat-id', '185e85da840b');
-            script.async = true;
-            document.body.appendChild(script);
-
-            var checks = 0;
-            var interval = setInterval(function() {
-                checks++;
-                if (wasOffline) {
-                    clearInterval(interval);
-                    return;
-                }
-                var iframes = document.querySelectorAll('iframe');
-                var found = false;
-                for (var i = 0; i < iframes.length; i++) {
-                    if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (found) {
-                    showOnlineWithChat();
-                    clearInterval(interval);
-                } else if (checks >= 15) {
-                    showOnlineNoBotman();
-                    clearInterval(interval);
-                }
-            }, 1000);
-        }
-
-        // ====== ЗАПУСК ======
-        showLoading();
-
+        // Старт
         pingInternet(function(online) {
             if (!online) {
                 showOffline();
                 return;
             }
-
-            showLoadingChat();
-            pingBotman(function(botmanOk) {
-                if (botmanOk) {
-                    loadBotmanWidget();
-                } else {
-                    showOnlineNoBotman();
-                }
-            });
+            statusText.textContent = 'Чат загружается...';
+            statusText.classList.add('loading-text');
         });
 
-        // Проверка сети каждые 5 секунд
+        // Проверяем виджет каждую секунду
+        var checkCount = 0;
+        var widgetInterval = setInterval(function() {
+            if (wasOffline) return;
+            checkWidget();
+            if (widgetFound) {
+                clearInterval(widgetInterval);
+            } else {
+                checkCount++;
+                if (checkCount >= 30) {
+                    clearInterval(widgetInterval);
+                    if (!widgetFound) {
+                        showOnlineNoBotman();
+                    }
+                }
+            }
+        }, 1000);
+
+        // Проверка сети
         setInterval(function() {
             pingInternet(function(online) {
                 if (!online && !wasOffline) {
@@ -386,5 +324,8 @@
         });
     })();
     </script>
+
+    <!-- Виджет BotMan -->
+    <script src="https://cdn.btmn.io/webchat/v1/loader.js" data-webchat-id="185e85da840b" async></script>
 </body>
 </html>
