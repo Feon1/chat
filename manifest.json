@@ -1,0 +1,8 @@
+{
+  "name": "Феон на связи",
+  "short_name": "Феон",
+  "start_url": "/chat/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#2E7D32"
+}
