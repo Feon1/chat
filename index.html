@@ -209,25 +209,38 @@
     var wasOffline = false;
     var widgetFound = false;
 
-    function checkWidget() {
-        if (widgetFound) return true;
-        var iframes = document.querySelectorAll('iframe');
-        for (var i = 0; i < iframes.length; i++) {
-            if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1) {
-                widgetFound = true;
-                indicator.classList.remove('loading', 'offline');
-                indicator.style.background = '#4CAF50';
-                indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
-                title.innerHTML = 'Феон на связи';
-                statusText.textContent = 'Соединение установлено';
-                statusText.classList.remove('offline-text', 'loading-text');
-                hintText.classList.remove('hidden');
-                vkButton.classList.add('hidden');
-                return true;
-            }
-        }
-        return false;
+ function checkWidget() {
+    if (widgetFound) return true;
+    // Ищем ЛЮБОЙ iframe на странице
+    var iframes = document.querySelectorAll('iframe');
+    if (iframes.length > 0) {
+        widgetFound = true;
+        indicator.classList.remove('loading', 'offline');
+        indicator.style.background = '#4CAF50';
+        indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
+        title.innerHTML = 'Феон на связи';
+        statusText.textContent = 'Соединение установлено';
+        statusText.classList.remove('offline-text', 'loading-text');
+        hintText.classList.remove('hidden');
+        vkButton.classList.add('hidden');
+        return true;
     }
+    // Ищем элементы BotMan
+    var elements = document.querySelectorAll('[data-webchat-id], [id*="botman"], [id*="webchat"], [class*="botman"], [class*="webchat"]');
+    if (elements.length > 0) {
+        widgetFound = true;
+        indicator.classList.remove('loading', 'offline');
+        indicator.style.background = '#4CAF50';
+        indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
+        title.innerHTML = 'Феон на связи';
+        statusText.textContent = 'Соединение установлено';
+        statusText.classList.remove('offline-text', 'loading-text');
+        hintText.classList.remove('hidden');
+        vkButton.classList.add('hidden');
+        return true;
+    }
+    return false;
+ }
 
     function showOnlineNoBotman() {
         indicator.classList.remove('loading', 'offline');
