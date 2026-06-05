@@ -2,7 +2,6 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; connect-src *; frame-src *; img-src * data:;">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Феон на связи</title>
     <link rel="manifest" href="manifest.json">
@@ -17,7 +16,6 @@
             padding: 20px;
             font-family: Arial, sans-serif;
             min-height: 100vh;
-            
             background-image: url('https://raw.githubusercontent.com/Feon1/chat/refs/heads/main/background.jpg');
             background-size: cover;
             background-position: center;
@@ -68,7 +66,6 @@
             border-radius: 50%;
             background: #4CAF50;
             box-shadow: 0 0 12px rgba(76, 175, 80, 0.8);
-            transition: background 0.5s, box-shadow 0.5s;
             flex-shrink: 0;
         }
 
@@ -110,7 +107,6 @@
             text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
             font-weight: 500;
             min-height: 24px;
-            transition: color 0.5s;
         }
 
         .info .status-text.offline-text {
@@ -121,64 +117,34 @@
             color: #ffe0b2;
         }
 
-        .info .hint {
-            font-size: 18px;
-            margin: 0 0 16px 0;
-            color: #ffffff;
-            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
-            line-height: 1.5;
-            font-weight: 500;
-            transition: opacity 0.5s;
-        }
-
-        .info .hint.hidden-hint {
-            opacity: 0;
-            height: 0;
-            margin: 0;
-            overflow: hidden;
-        }
-
-        .info .vk-link {
+        .chat-button {
             display: inline-block;
-            font-size: 16px;
-            color: #ffffff;
-            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
-            font-weight: 500;
-            transition: opacity 0.5s;
+            font-size: 18px;
+            color: #fff;
+            font-weight: 600;
             text-decoration: none;
-            padding: 10px 24px;
-            border: 2px solid rgba(255, 255, 255, 0.6);
-            border-radius: 30px;
-            background: rgba(255, 255, 255, 0.1);
+            padding: 16px 32px;
+            border: 2px solid #fff;
+            border-radius: 50px;
+            background: rgba(76, 175, 80, 0.4);
+            margin-top: 8px;
         }
 
-        .info .vk-link:hover {
-            background: rgba(255, 255, 255, 0.2);
-            border-color: #fff;
+        .chat-button:hover {
+            background: rgba(76, 175, 80, 0.7);
         }
 
-        .info .vk-link.hidden-hint {
-            opacity: 0;
-            height: 0;
-            margin: 0;
-            padding: 0;
-            border: none;
-            overflow: hidden;
+        .hidden {
+            display: none;
         }
 
         @media (max-width: 480px) {
-            .info {
-                padding: 30px 16px;
-            }
             .info h2 {
                 font-size: 26px;
             }
-            .info .hint {
-                font-size: 15px;
-            }
-            .info .vk-link {
-                font-size: 14px;
-                padding: 8px 20px;
+            .chat-button {
+                font-size: 16px;
+                padding: 14px 28px;
             }
         }
     </style>
@@ -192,52 +158,36 @@
             </div>
             
             <div class="status-text loading-text" id="statusText">Чат загружается...</div>
-            <div class="hint hidden-hint" id="hint">Нажми на значок чата, чтобы начать</div>
             
-            <a href="https://vk.com/club136655585" target="_blank" class="vk-link hidden-hint" id="vkLink">
-                Попробуйте чат в ВК или дождитесь подключения
+            <!-- Кнопка ВК (показывается всегда, если чат не загрузился) -->
+            <a href="https://vk.com/club136655585" target="_blank" class="chat-button" id="vkButton">
+                💬 Написать в ВК
             </a>
         </div>
     </div>
 
-    <script
-      src="https://cdn.btmn.io/webchat/v1/loader.js"
-      data-webchat-id="185e85da840b"
-      async
-    ></script>
+    <!-- BotMan -->
+    <script src="https://cdn.btmn.io/webchat/v1/loader.js" data-webchat-id="185e85da840b" async></script>
 
     <script>
     (function() {
         var indicator = document.getElementById('indicator');
         var title = document.getElementById('title');
         var statusText = document.getElementById('statusText');
-        var hint = document.getElementById('hint');
-        var vkLink = document.getElementById('vkLink');
+        var vkButton = document.getElementById('vkButton');
         var wasOffline = false;
         var chatLoaded = false;
-        var chatCheckCount = 0;
-        var maxChatChecks = 30;
-
-        function setLoading() {
-            indicator.classList.remove('offline');
-            indicator.classList.add('loading');
-            title.innerHTML = 'Феон';
-            statusText.textContent = 'Чат загружается...';
-            statusText.classList.remove('offline-text');
-            statusText.classList.add('loading-text');
-            hint.classList.add('hidden-hint');
-            vkLink.classList.add('hidden-hint');
-        }
+        var checkCount = 0;
 
         function setConnected() {
             chatLoaded = true;
             wasOffline = false;
             indicator.classList.remove('loading', 'offline');
+            indicator.style.background = '#4CAF50';
             title.innerHTML = 'Феон на связи';
             statusText.textContent = 'Соединение установлено';
             statusText.classList.remove('offline-text', 'loading-text');
-            hint.classList.remove('hidden-hint');
-            vkLink.classList.add('hidden-hint');
+            vkButton.classList.add('hidden');
         }
 
         function setOffline() {
@@ -249,106 +199,82 @@
             statusText.textContent = 'Отсутствует соединение';
             statusText.classList.add('offline-text');
             statusText.classList.remove('loading-text');
-            hint.classList.add('hidden-hint');
-            vkLink.classList.remove('hidden-hint');
+            vkButton.classList.remove('hidden');
+        }
+
+        function setLoading() {
+            indicator.classList.remove('offline');
+            indicator.classList.add('loading');
+            title.innerHTML = 'Феон';
+            statusText.textContent = 'Чат загружается...';
+            statusText.classList.remove('offline-text');
+            statusText.classList.add('loading-text');
+            vkButton.classList.remove('hidden');
         }
 
         function checkChatLoaded() {
-            // Проверяем iframe с btmn
             var iframes = document.querySelectorAll('iframe');
             for (var i = 0; i < iframes.length; i++) {
                 if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1) {
                     return true;
                 }
             }
-            // Проверяем элементы BotMan в DOM
-            var elements = document.querySelectorAll('[id*="botman"], [id*="webchat"], [class*="botman"], [class*="webchat"], [data-webchat-id]');
-            if (elements.length > 0) return true;
             return false;
         }
 
-        // Отдельный цикл ТОЛЬКО для проверки загрузки чата
+        function pingServer(callback) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('HEAD', 'https://feon1.github.io/chat/manifest.json?t=' + Date.now(), true);
+            xhr.timeout = 5000;
+            xhr.onload = function() { callback(true); };
+            xhr.onerror = function() { callback(false); };
+            xhr.ontimeout = function() { callback(false); };
+            try { xhr.send(); } catch(e) { callback(false); }
+        }
+
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/chat/sw.js').catch(function(){});
+        }
+
+        pingServer(function(online) {
+            if (!online) setOffline();
+        });
+
+        // Проверка чата
         var chatInterval = setInterval(function() {
             if (chatLoaded) {
                 clearInterval(chatInterval);
                 return;
             }
-            if (wasOffline) return; // Не проверяем если офлайн
-            
-            chatCheckCount++;
+            if (wasOffline) return;
+            checkCount++;
             if (checkChatLoaded()) {
                 setConnected();
                 clearInterval(chatInterval);
-            } else if (chatCheckCount >= maxChatChecks) {
-                // Не загрузился за 30 секунд
-                statusText.textContent = 'Чат недоступен. Попробуйте обновить страницу.';
+            } else if (checkCount >= 15) {
+                statusText.textContent = 'Напишите нам в ВК';
                 statusText.classList.add('offline-text');
-                statusText.classList.remove('loading-text');
                 indicator.classList.add('offline');
                 indicator.classList.remove('loading');
-                hint.classList.add('hidden-hint');
-                vkLink.classList.remove('hidden-hint');
                 clearInterval(chatInterval);
             }
         }, 1000);
 
-        // Пинг сервера
-        function pingServer(callback) {
-            var xhr = new XMLHttpRequest();
-            xhr.open('HEAD', 'https://feon1.github.io/chat/manifest.json?t=' + Date.now(), true);
-            xhr.timeout = 5000;
-            xhr.onload = function() {
-                callback(true);
-            };
-            xhr.onerror = function() {
-                callback(false);
-            };
-            xhr.ontimeout = function() {
-                callback(false);
-            };
-            try {
-                xhr.send();
-            } catch(e) {
-                callback(false);
-            }
-        }
-
-        // Service Worker
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/chat/sw.js').catch(function() {});
-        }
-
-        // Начальная проверка
-        pingServer(function(online) {
-            if (!online) {
-                setOffline();
-            }
-        });
-
-        // Проверка соединения каждые 5 секунд
+        // Проверка сети
         setInterval(function() {
             pingServer(function(online) {
-                if (!online && !wasOffline) {
-                    setOffline();
-                } else if (online && wasOffline) {
-                    location.reload();
-                }
+                if (!online && !wasOffline) setOffline();
+                else if (online && wasOffline) location.reload();
             });
         }, 5000);
 
-        // События
+        window.addEventListener('offline', function() { setOffline(); });
         window.addEventListener('online', function() {
             setTimeout(function() {
                 pingServer(function(online) {
-                    if (online && wasOffline) {
-                        location.reload();
-                    }
+                    if (online && wasOffline) location.reload();
                 });
             }, 1000);
-        });
-
-        window.addEventListener('offline', function() {
-            setOffline();
         });
     })();
     </script>
