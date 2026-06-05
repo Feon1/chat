@@ -229,17 +229,19 @@
             return false;
         }
 
-        function showOnlineNoBotman() {
-            wasOffline = false;
-            indicator.classList.remove('loading', 'offline');
-            indicator.style.background = '#4CAF50';
-            indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
-            title.innerHTML = 'Феон на связи';
-            statusText.textContent = 'Соединение установлено';
-            statusText.classList.remove('offline-text', 'loading-text');
-            hintText.classList.add('hidden');
-            vkButton.classList.remove('hidden');
-        }
+function showOnlineNoBotman() {
+    wasOffline = false;
+    indicator.classList.remove('offline');
+    indicator.classList.add('loading');
+    indicator.style.background = '#ff9800';
+    indicator.style.boxShadow = '0 0 12px rgba(255, 152, 0, 0.8)';
+    title.innerHTML = 'Феон на связи';
+    statusText.textContent = 'Нестабильное соединение';
+    statusText.classList.remove('offline-text');
+    statusText.classList.add('loading-text');
+    hintText.classList.add('hidden');
+    vkButton.classList.remove('hidden');
+}
 
         function showOffline() {
             wasOffline = true;
