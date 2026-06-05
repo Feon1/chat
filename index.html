@@ -201,6 +201,18 @@
 
     <script>
     (function() {
+        // ====== ОЧИСТКА КЭША, КУК, ХРАНИЛИЩ ======
+        try { localStorage.clear(); } catch(e) {}
+        try { sessionStorage.clear(); } catch(e) {}
+        var cookies = document.cookie.split(';');
+        for (var i = 0; i < cookies.length; i++) {
+            var cookie = cookies[i];
+            var eqPos = cookie.indexOf('=');
+            var name = eqPos > -1 ? cookie.substr(0, eqPos).trim() : cookie.trim();
+            document.cookie = name + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/';
+            document.cookie = name + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/chat/';
+        }
+
         var indicator = document.getElementById('indicator');
         var title = document.getElementById('title');
         var statusText = document.getElementById('statusText');
@@ -275,7 +287,7 @@
         // Пинг интернета
         function pingInternet(callback) {
             var xhr = new XMLHttpRequest();
-            xhr.open('HEAD', 'https://feon1.github.io/chat/index.html?t=' + Date.now(), true);
+            xhr.open('HEAD', 'https://feon1.github.io/chat/index.html?nocache=' + Date.now(), true);
             xhr.timeout = 5000;
             xhr.onload = function() { callback(true); };
             xhr.onerror = function() { callback(false); };
@@ -286,7 +298,7 @@
         // Пинг BotMan
         function pingBotman(callback) {
             var xhr = new XMLHttpRequest();
-            xhr.open('HEAD', 'https://cdn.btmn.io/webchat/v1/loader.js?t=' + Date.now(), true);
+            xhr.open('HEAD', 'https://cdn.btmn.io/webchat/v1/loader.js?nocache=' + Date.now(), true);
             xhr.timeout = 5000;
             xhr.onload = function() { callback(true); };
             xhr.onerror = function() { callback(false); };
@@ -296,8 +308,15 @@
 
         // Загрузка виджета BotMan
         function loadBotmanWidget() {
+            var oldScript = document.querySelector('script[src*="btmn"]');
+            if (oldScript) oldScript.remove();
+            var oldIframes = document.querySelectorAll('iframe[src*="btmn"]');
+            for (var i = 0; i < oldIframes.length; i++) {
+                oldIframes[i].remove();
+            }
+
             var script = document.createElement('script');
-            script.src = 'https://cdn.btmn.io/webchat/v1/loader.js';
+            script.src = 'https://cdn.btmn.io/webchat/v1/loader.js?nocache=' + Date.now();
             script.setAttribute('data-webchat-id', '185e85da840b');
             script.async = true;
             document.body.appendChild(script);
