@@ -159,14 +159,12 @@
             
             <div class="status-text loading-text" id="statusText">Чат загружается...</div>
             
-            <!-- Кнопка ВК (показывается всегда, если чат не загрузился) -->
             <a href="https://vk.com/club136655585" target="_blank" class="chat-button" id="vkButton">
                 💬 Написать в ВК
             </a>
         </div>
     </div>
 
-    <!-- BotMan -->
     <script src="https://cdn.btmn.io/webchat/v1/loader.js" data-webchat-id="185e85da840b" async></script>
 
     <script>
@@ -177,13 +175,13 @@
         var vkButton = document.getElementById('vkButton');
         var wasOffline = false;
         var chatLoaded = false;
-        var checkCount = 0;
 
         function setConnected() {
             chatLoaded = true;
             wasOffline = false;
             indicator.classList.remove('loading', 'offline');
             indicator.style.background = '#4CAF50';
+            indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
             title.innerHTML = 'Феон на связи';
             statusText.textContent = 'Соединение установлено';
             statusText.classList.remove('offline-text', 'loading-text');
@@ -219,6 +217,9 @@
                     return true;
                 }
             }
+            var elements = document.querySelectorAll('[data-webchat-id], [id*="botman"], [id*="webchat"], [class*="botman"], [class*="webchat"]');
+            if (elements.length > 0) return true;
+            if (document.querySelectorAll('iframe').length > 0) return true;
             return false;
         }
 
@@ -240,7 +241,7 @@
             if (!online) setOffline();
         });
 
-        // Проверка чата
+        var checkCount = 0;
         var chatInterval = setInterval(function() {
             if (chatLoaded) {
                 clearInterval(chatInterval);
@@ -260,7 +261,6 @@
             }
         }, 1000);
 
-        // Проверка сети
         setInterval(function() {
             pingServer(function(online) {
                 if (!online && !wasOffline) setOffline();
