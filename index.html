@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Феон на связи</title>
     <meta name="theme-color" content="#2E7D32">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='8' fill='%234CAF50'/></svg>">
     <style>
         * {
             box-sizing: border-box;
@@ -146,12 +147,20 @@
             display: none;
         }
 
-        .footer-email {
+        .footer-links {
             position: fixed;
             bottom: 20px;
             left: 50%;
             transform: translateX(-50%);
             z-index: 2;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .footer-link {
             font-size: 14px;
             color: #ffffff;
             text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
@@ -160,8 +169,20 @@
             opacity: 0.8;
         }
 
-        .footer-email:hover {
+        .footer-link:hover {
             opacity: 1;
+        }
+
+        .footer-divider {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 14px;
+        }
+
+        .footer-donate {
+            font-size: 14px;
+            color: #ff6b6b;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+            font-weight: 600;
         }
 
         @media (max-width: 480px) {
@@ -172,9 +193,18 @@
                 font-size: 16px;
                 padding: 14px 28px;
             }
-            .footer-email {
+            .footer-link {
                 font-size: 12px;
+            }
+            .footer-links {
                 bottom: 12px;
+                gap: 8px;
+            }
+            .footer-donate {
+                font-size: 12px;
+            }
+            .footer-divider {
+                font-size: 12px;
             }
         }
     </style>
@@ -197,9 +227,15 @@
         </div>
     </div>
 
-    <a href="mailto:feon5upport@ya.ru" class="footer-email">support:feon5upport@ya.ru</a>
+    <div class="footer-links">
+        <span class="footer-donate">❤️ Donate</span>
+        <span class="footer-divider">|</span>
+        <a href="https://yoomoney.ru/to/4100119548371455" target="_blank" class="footer-link">💳 ЮMoney: 4100119548371455</a>
+        <span class="footer-divider">|</span>
+        <a href="mailto:feon5upport@ya.ru" class="footer-link">📧 support:feon5upport@ya.ru</a>
+    </div>
 
-        <script>
+    <script>
     (function() {
         var indicator = document.getElementById('indicator');
         var title = document.getElementById('title');
@@ -209,7 +245,6 @@
         var wasOffline = false;
         var widgetFound = false;
 
-        // Определяем тип соединения
         var connectionType = 'unknown';
         if (navigator.connection) {
             connectionType = navigator.connection.effectiveType || navigator.connection.type || 'unknown';
@@ -230,26 +265,30 @@
         function checkWidget() {
             if (widgetFound) return true;
             
-            // Проверяем глобальный объект BotMan
-            if (typeof window.BotmanWebChat !== 'undefined' && window.BotmanWebChat) {
-                setConnected();
-                return true;
-            }
-            
-            // Ищем iframe с btmn
-            var iframes = document.querySelectorAll('iframe');
-            for (var i = 0; i < iframes.length; i++) {
-                if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1) {
+            // Ищем видимую кнопку чата (фиксированный элемент в правом нижнем углу с высоким z-index)
+            var allElements = document.querySelectorAll('div, iframe, button');
+            for (var i = 0; i < allElements.length; i++) {
+                var el = allElements[i];
+                var style = window.getComputedStyle(el);
+                if (style.position === 'fixed' && 
+                    (style.bottom === '0px' || parseInt(style.bottom) < 100) && 
+                    (style.right === '0px' || parseInt(style.right) < 100) &&
+                    style.zIndex !== 'auto' && 
+                    parseInt(style.zIndex) > 1000 &&
+                    el.offsetWidth > 0 && 
+                    el.offsetHeight > 0) {
                     setConnected();
                     return true;
                 }
             }
             
-            // Ищем элементы BotMan в DOM
-            var elements = document.querySelectorAll('[data-webchat-id], [id*="botman"], [id*="webchat"], [class*="botman"], [class*="webchat"]');
-            if (elements.length > 0) {
-                setConnected();
-                return true;
+            // Ищем iframe с btmn
+            var iframes = document.querySelectorAll('iframe');
+            for (var i = 0; i < iframes.length; i++) {
+                if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1 && iframes[i].offsetWidth > 0) {
+                    setConnected();
+                    return true;
+                }
             }
             
             return false;
@@ -263,7 +302,6 @@
             indicator.style.boxShadow = '0 0 12px rgba(255, 152, 0, 0.8)';
             title.innerHTML = 'Феон на связи';
             
-            // Показываем тип соединения
             var connText = '';
             if (connectionType === 'cellular' || connectionType === '4g' || connectionType === '3g' || connectionType === '2g') {
                 connText = ' (мобильный интернет)';
@@ -320,13 +358,13 @@
                 clearInterval(widgetInterval);
             } else {
                 checkCount++;
-                if (checkCount === 15) {
+                if (checkCount === 30) {
                     showOnlineNoBotman();
                 }
             }
         }, 1000);
 
-        // Проверка сети каждые 5 секунд
+        // Проверка сети каждые 15 секунд
         setInterval(function() {
             pingInternet(function(online) {
                 if (!online && !wasOffline) {
@@ -335,7 +373,7 @@
                     location.reload();
                 }
             });
-        }, 5000);
+        }, 15000);
 
         window.addEventListener('offline', function() { showOffline(); });
         window.addEventListener('online', function() {
