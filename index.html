@@ -262,30 +262,23 @@
             vkButton.classList.add('hidden');
         }
 
-        function checkWidget() {
+                function checkWidget() {
             if (widgetFound) return true;
             
-            // Ищем видимую кнопку чата (фиксированный элемент в правом нижнем углу с высоким z-index)
-            var allElements = document.querySelectorAll('div, iframe, button');
-            for (var i = 0; i < allElements.length; i++) {
-                var el = allElements[i];
-                var style = window.getComputedStyle(el);
-                if (style.position === 'fixed' && 
-                    (style.bottom === '0px' || parseInt(style.bottom) < 100) && 
-                    (style.right === '0px' || parseInt(style.right) < 100) &&
-                    style.zIndex !== 'auto' && 
-                    parseInt(style.zIndex) > 1000 &&
-                    el.offsetWidth > 0 && 
-                    el.offsetHeight > 0) {
+            // Ищем ЛЮБОЙ iframe (BotMan всегда создаёт iframe для чата)
+            var iframes = document.querySelectorAll('iframe');
+            for (var i = 0; i < iframes.length; i++) {
+                if (iframes[i].offsetWidth > 0 && iframes[i].offsetHeight > 0) {
+                    // Видимый iframe найден — виджет загрузился
                     setConnected();
                     return true;
                 }
             }
             
-            // Ищем iframe с btmn
-            var iframes = document.querySelectorAll('iframe');
-            for (var i = 0; i < iframes.length; i++) {
-                if (iframes[i].src && iframes[i].src.indexOf('btmn') !== -1 && iframes[i].offsetWidth > 0) {
+            // Ищем элементы BotMan по атрибутам
+            var botmanElements = document.querySelectorAll('[data-webchat-id], [id*="botman"], [id*="webchat"], [class*="botman"]');
+            for (var i = 0; i < botmanElements.length; i++) {
+                if (botmanElements[i].offsetWidth > 0 && botmanElements[i].offsetHeight > 0) {
                     setConnected();
                     return true;
                 }
