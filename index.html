@@ -236,6 +236,22 @@
         <a href="mailto:feon.5upport@ya.ru" class="footer-link">📧 support:feon.5upport@ya.ru</a>
     </div>
 
+    <!-- Принудительная кодировка для всех AJAX-запросов -->
+    <script>
+        (function() {
+            var originalOpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function() {
+                var result = originalOpen.apply(this, arguments);
+                this.overrideMimeType('text/plain; charset=utf-8');
+                return result;
+            };
+        })();
+    </script>
+
+    <!-- Виджет BotMan (локальный) -->
+    <script src="loader.js" data-webchat-id="185e85da840b" async></script>
+
+    <!-- Основной скрипт страницы -->
     <script>
     (function() {
         var indicator = document.getElementById('indicator');
@@ -266,16 +282,13 @@
         function checkWidget() {
             if (widgetFound) return true;
             
-            // Ищем корневой элемент BotMan
             var root = document.getElementById('botman-webchat-root');
             if (root && root.offsetWidth > 0) {
-                // Проверяем, есть ли кнопка триггера внутри
                 var trigger = root.querySelector('.bwc-trigger');
                 if (trigger && trigger.offsetWidth > 0 && trigger.offsetHeight > 0) {
                     setConnected();
                     return true;
                 }
-                // Или проверяем shadow DOM
                 if (root.shadowRoot) {
                     var shadowTrigger = root.shadowRoot.querySelector('.bwc-trigger');
                     if (shadowTrigger && shadowTrigger.offsetWidth > 0) {
@@ -285,7 +298,6 @@
                 }
             }
             
-            // Запасной вариант: ищем любой элемент с классом bwc-trigger
             var triggers = document.querySelectorAll('.bwc-trigger');
             for (var i = 0; i < triggers.length; i++) {
                 if (triggers[i].offsetWidth > 0 && triggers[i].offsetHeight > 0) {
@@ -343,7 +355,6 @@
             try { xhr.send(); } catch(e) { callback(false); }
         }
 
-        // Старт
         pingInternet(function(online) {
             if (!online) {
                 showOffline();
@@ -353,7 +364,6 @@
             statusText.classList.add('loading-text');
         });
 
-        // Проверяем виджет
         var checkCount = 0;
         var widgetInterval = setInterval(function() {
             if (wasOffline) return;
@@ -367,7 +377,6 @@
             }
         }, 1000);
 
-        // Проверка сети каждые 15 секунд
         setInterval(function() {
             pingInternet(function(online) {
                 if (!online && !wasOffline) {
@@ -388,11 +397,5 @@
         });
     })();
     </script>
-
-    <!-- Виджет BotMan (локальный) -->
-   
-    <script src="loader.js" data-webchat-id="185e85da840b" async charset="utf-8"></script>
-    // <script src="loader.js" data-webchat-id="185e85da840b" async></script>
-    
 </body>
 </html>
