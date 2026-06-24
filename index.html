@@ -7,10 +7,9 @@
     <meta name="theme-color" content="#2E7D32">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='8' fill='%234CAF50'/></svg>">
 
-    <!-- Предзагрузка ресурсов для ускорения загрузки виджета -->
+    <!-- Предзагрузка ресурсов (без preload для бандла) -->
     <link rel="dns-prefetch" href="https://cdn.btmn.io">
     <link rel="preconnect" href="https://cdn.btmn.io">
-    // <link rel="preload" href="https://cdn.btmn.io/webchat/v1/botman-webchat.D6vXXlSJ.js" as="script">
 
     <style>
         * {
@@ -295,8 +294,28 @@
         <a href="mailto:feon.5upport@ya.ru" class="footer-link">📧 support:feon.5upport@ya.ru</a>
     </div>
 
-    <!-- Виджет BotMan с оригинального CDN и явной кодировкой -->
-    <script src="https://cdn.btmn.io/webchat/v1/loader.js" data-webchat-id="185e85da840b" async charset="utf-8"></script>
+    <!-- Виджет BotMan с оригинального CDN и параметром версии для обхода кэша -->
+    <script src="https://cdn.btmn.io/webchat/v1/loader.js?v=3" data-webchat-id="185e85da840b" async charset="utf-8"></script>
+
+    <!-- ЗАПАСНОЙ СКРИПТ: принудительная загрузка бандла, если loader.js не сработал -->
+    <script>
+    (function() {
+        // Проверяем, появился ли виджет через 5 секунд
+        setTimeout(function() {
+            if (!document.getElementById('botman-webchat-root')) {
+                var script = document.createElement('script');
+                script.src = 'https://cdn.btmn.io/webchat/v1/botman-webchat.D6vXXlSJ.js';
+                script.charset = 'utf-8';
+                script.onload = function() {
+                    console.log('Бандл загружен напрямую (запасной скрипт)');
+                    // Если виджет не инициализируется автоматически, можно попробовать:
+                    // if (window.BotmanWebChat) { window.BotmanWebChat.open(); }
+                };
+                document.head.appendChild(script);
+            }
+        }, 5000); // 5 секунд ожидания
+    })();
+    </script>
 
     <!-- Основной скрипт страницы -->
     <script>
@@ -320,9 +339,7 @@
         if (navigator.connection) {
             var type = navigator.connection.effectiveType || navigator.connection.type || 'unknown';
             connectionType = type;
-            // Считаем мобильными все типы, кроме 'wifi' и 'ethernet'
             isMobile = (type === 'cellular' || type === '4g' || type === '3g' || type === '2g' || type === 'slow-2g');
-            // Для старых браузеров проверяем наличие `navigator.connection` и тип
         }
 
         // -------- Обновление текста индикатора загрузки --------
@@ -332,7 +349,6 @@
             }
         }
 
-        // Показываем разное сообщение в зависимости от соединения
         if (isMobile) {
             updateLoaderText('Загрузка чата... (мобильный интернет)', 'Это может занять до 30 секунд');
         } else if (connectionType === 'wifi') {
@@ -341,11 +357,10 @@
             updateLoaderText('Загрузка чата...', 'Пожалуйста, подождите');
         }
 
-        // -------- Функция скрытия оверлея (когда виджет загрузится) --------
+        // -------- Функция скрытия оверлея --------
         function hideLoader() {
             if (loaderOverlay) {
                 loaderOverlay.classList.add('hidden');
-                // После скрытия оверлея можно убрать его из DOM, но оставим для анимации
                 setTimeout(function() {
                     loaderOverlay.style.display = 'none';
                 }, 500);
@@ -356,13 +371,11 @@
             }
         }
 
-        // -------- Функция показа оверлея (если загрузка затянулась) --------
+        // -------- Функция показа оверлея с задержкой --------
         function showLoaderDelayed() {
             if (loaderOverlay && !loaderOverlay.classList.contains('hidden')) {
-                // Если оверлей уже виден, ничего не делаем
                 return;
             }
-            // Показываем оверлей через 5 секунд, если виджет ещё не загрузился
             loadingTimeout = setTimeout(function() {
                 if (!widgetFound && !wasOffline) {
                     loaderOverlay.classList.remove('hidden');
@@ -376,7 +389,7 @@
             }, 5000);
         }
 
-        // -------- Функция для обнаружения виджета --------
+        // -------- Функция обнаружения виджета --------
         function setConnected() {
             widgetFound = true;
             indicator.classList.remove('loading', 'offline');
@@ -387,8 +400,6 @@
             statusText.classList.remove('offline-text', 'loading-text');
             hintText.classList.remove('hidden');
             vkButton.classList.add('hidden');
-
-            // Скрываем оверлей загрузки
             hideLoader();
         }
 
@@ -442,7 +453,6 @@
             statusText.classList.add('loading-text');
             hintText.classList.add('hidden');
             vkButton.classList.remove('hidden');
-            // Оверлей уже скрыт или скрываем
             hideLoader();
         }
 
@@ -458,7 +468,6 @@
             statusText.classList.remove('loading-text');
             hintText.classList.add('hidden');
             vkButton.classList.add('hidden');
-            // Скрываем оверлей, так как нет соединения
             hideLoader();
         }
 
@@ -480,29 +489,24 @@
             }
             statusText.textContent = 'Чат загружается...';
             statusText.classList.add('loading-text');
-            // Показываем индикатор загрузки с задержкой
             showLoaderDelayed();
         });
 
-        // Проверяем виджет
         var checkCount = 0;
         var widgetInterval = setInterval(function() {
             if (wasOffline) return;
             if (checkWidget()) {
                 clearInterval(widgetInterval);
-                // Если виджет найден, скрываем оверлей
                 hideLoader();
             } else {
                 checkCount++;
-                if (checkCount === 20) { // ~20 секунд
+                if (checkCount === 20) {
                     showOnlineNoBotman();
-                    // Скрываем оверлей, так как показали статус
                     hideLoader();
                 }
             }
         }, 1000);
 
-        // Проверка сети каждые 15 секунд
         setInterval(function() {
             pingInternet(function(online) {
                 if (!online && !wasOffline) {
@@ -522,7 +526,6 @@
             }, 1000);
         });
 
-        // Дополнительно: если страница уже загружена и виджет не появился через 30 сек, показываем оверлей (если скрыт)
         setTimeout(function() {
             if (!widgetFound && !wasOffline && loaderOverlay && loaderOverlay.classList.contains('hidden')) {
                 loaderOverlay.classList.remove('hidden');
