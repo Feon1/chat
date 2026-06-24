@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Феон на связи</title>
+    <meta name="theme-color" content="#2E7D32">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='8' fill='%234CAF50'/></svg>">
+
+    <!-- Предзагрузка ресурсов для ускорения загрузки виджета -->
+    <link rel="dns-prefetch" href="https://cdn.btmn.io">
+    <link rel="preconnect" href="https://cdn.btmn.io">
+    <link rel="preload" href="https://cdn.btmn.io/webchat/v1/botman-webchat.D6vXXlSJ.js" as="script">
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            min-height: 100vh;
+            background-image: url('https://raw.githubusercontent.com/Feon1/chat/refs/heads/main/background.jpg');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 0;
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            max-width: 600px;
+            margin: 0 auto;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+
+        .info {
+            text-align: center;
+            padding: 40px 20px;
+        }
+
+        .status-line {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #4CAF50;
+            box-shadow: 0 0 12px rgba(76, 175, 80, 0.8);
+            flex-shrink: 0;
+            transition: background 0.3s, box-shadow 0.3s;
+        }
+
+        .indicator.offline {
+            background: #f44336;
+            box-shadow: 0 0 12px rgba(244, 67, 54, 0.8);
+            animation: pulse-red 1.5s infinite;
+        }
+
+        .indicator.loading {
+            background: #ff9800;
+            box-shadow: 0 0 12px rgba(255, 152, 0, 0.8);
+            animation: pulse-yellow 1s infinite;
+        }
+
+        @keyframes pulse-red {
+            0%, 100% { box-shadow: 0 0 8px rgba(244, 67, 54, 0.6); }
+            50% { box-shadow: 0 0 20px rgba(244, 67, 54, 1); }
+        }
+
+        @keyframes pulse-yellow {
+            0%, 100% { box-shadow: 0 0 8px rgba(255, 152, 0, 0.6); }
+            50% { box-shadow: 0 0 20px rgba(255, 152, 0, 1); }
+        }
+
+        .info h2 {
+            font-size: 36px;
+            font-weight: 700;
+            margin: 0;
+            color: #ffffff;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+            letter-spacing: 1px;
+        }
+
+        .info .status-text {
+            font-size: 16px;
+            margin: 0 0 8px 0;
+            color: #ffffff;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+            font-weight: 500;
+            min-height: 24px;
+        }
+
+        .info .status-text.offline-text {
+            color: #ffcdd2;
+        }
+
+        .info .status-text.loading-text {
+            color: #ffe0b2;
+        }
+
+        .info .hint-text {
+            font-size: 14px;
+            margin: 0 0 16px 0;
+            color: #ffffff;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+            font-weight: 500;
+            min-height: 20px;
+        }
+
+        .chat-button {
+            display: inline-block;
+            font-size: 18px;
+            color: #fff;
+            font-weight: 600;
+            text-decoration: none;
+            padding: 16px 32px;
+            border: 2px solid #fff;
+            border-radius: 50px;
+            background: rgba(76, 175, 80, 0.4);
+            margin-top: 8px;
+            transition: background 0.3s;
+        }
+
+        .chat-button:hover {
+            background: rgba(76, 175, 80, 0.7);
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* Индикатор загрузки (спиннер) */
+        .loader-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+            backdrop-filter: blur(4px);
+            transition: opacity 0.5s ease;
+        }
+
+        .loader-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .loader-spinner {
+            width: 60px;
+            height: 60px;
+            border: 6px solid rgba(255, 255, 255, 0.2);
+            border-top: 6px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .loader-text {
+            margin-top: 20px;
+            color: #ffffff;
+            font-size: 18px;
+            font-weight: 500;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.8);
+            text-align: center;
+        }
+
+        .loader-text small {
+            display: block;
+            font-size: 14px;
+            opacity: 0.8;
+            margin-top: 8px;
+        }
+
+        .footer-links {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 2;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .footer-link {
+            font-size: 14px;
+            color: #ffffff;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+            font-weight: 500;
+            text-decoration: none;
+            opacity: 0.8;
+        }
+
+        .footer-link:hover {
+            opacity: 1;
+        }
+
+        .footer-divider {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 14px;
+        }
+
+        .footer-donate {
+            font-size: 14px;
+            color: #ff6b6b;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+            font-weight: 600;
+            cursor: default;
+            pointer-events: none;
+        }
+
+        @media (max-width: 480px) {
+            .info h2 { font-size: 26px; }
+            .chat-button { font-size: 16px; padding: 14px 28px; }
+            .footer-link { font-size: 12px; }
+            .footer-links { bottom: 12px; gap: 8px; }
+            .footer-donate { font-size: 12px; }
+            .footer-divider { font-size: 12px; }
+            .loader-spinner { width: 40px; height: 40px; border-width: 4px; }
+            .loader-text { font-size: 16px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Оверлей загрузки (индикатор) -->
+    <div class="loader-overlay" id="loaderOverlay">
+        <div class="loader-spinner"></div>
+        <div class="loader-text" id="loaderText">
+            Загрузка чата...
+            <small>Пожалуйста, подождите</small>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="info">
+            <div class="status-line">
+                <div class="indicator loading" id="indicator"></div>
+                <h2 id="title">Феон</h2>
+            </div>
+            
+            <div class="status-text loading-text" id="statusText">Проверка соединения...</div>
+            
+            <div class="hint-text hidden" id="hintText">Нажмите на значок чата</div>
+            
+            <a href="https://vk.com/club136655585" target="_blank" class="chat-button hidden" id="vkButton">
+                💬 Написать в ВК
+            </a>
+        </div>
+    </div>
+
+    <div class="footer-links">
+        <span class="footer-donate">❤️ Donate</span>
+        <span class="footer-divider">|</span>
+        <a href="https://yoomoney.ru/to/4100119548371455" target="_blank" class="footer-link">💳 ЮMoney: 4100119548371455</a>
+        <span class="footer-divider">|</span>
+        <a href="mailto:feon.5upport@ya.ru" class="footer-link">📧 support:feon.5upport@ya.ru</a>
+    </div>
+
+    <!-- Виджет BotMan с оригинального CDN и явной кодировкой -->
+    <script src="https://cdn.btmn.io/webchat/v1/loader.js" data-webchat-id="185e85da840b" async charset="utf-8"></script>
+
+    <!-- Основной скрипт страницы -->
+    <script>
+    (function() {
+        // -------- Элементы --------
+        var indicator = document.getElementById('indicator');
+        var title = document.getElementById('title');
+        var statusText = document.getElementById('statusText');
+        var hintText = document.getElementById('hintText');
+        var vkButton = document.getElementById('vkButton');
+        var loaderOverlay = document.getElementById('loaderOverlay');
+        var loaderText = document.getElementById('loaderText');
+
+        var wasOffline = false;
+        var widgetFound = false;
+        var loadingTimeout = null;
+
+        // -------- Определение типа соединения --------
+        var connectionType = 'unknown';
+        var isMobile = false;
+        if (navigator.connection) {
+            var type = navigator.connection.effectiveType || navigator.connection.type || 'unknown';
+            connectionType = type;
+            // Считаем мобильными все типы, кроме 'wifi' и 'ethernet'
+            isMobile = (type === 'cellular' || type === '4g' || type === '3g' || type === '2g' || type === 'slow-2g');
+            // Для старых браузеров проверяем наличие `navigator.connection` и тип
+        }
+
+        // -------- Обновление текста индикатора загрузки --------
+        function updateLoaderText(message, detail) {
+            if (loaderText) {
+                loaderText.innerHTML = message + (detail ? '<small>' + detail + '</small>' : '');
+            }
+        }
+
+        // Показываем разное сообщение в зависимости от соединения
+        if (isMobile) {
+            updateLoaderText('Загрузка чата... (мобильный интернет)', 'Это может занять до 30 секунд');
+        } else if (connectionType === 'wifi') {
+            updateLoaderText('Загрузка чата... (Wi-Fi)', 'Пожалуйста, подождите');
+        } else {
+            updateLoaderText('Загрузка чата...', 'Пожалуйста, подождите');
+        }
+
+        // -------- Функция скрытия оверлея (когда виджет загрузится) --------
+        function hideLoader() {
+            if (loaderOverlay) {
+                loaderOverlay.classList.add('hidden');
+                // После скрытия оверлея можно убрать его из DOM, но оставим для анимации
+                setTimeout(function() {
+                    loaderOverlay.style.display = 'none';
+                }, 500);
+            }
+            if (loadingTimeout) {
+                clearTimeout(loadingTimeout);
+                loadingTimeout = null;
+            }
+        }
+
+        // -------- Функция показа оверлея (если загрузка затянулась) --------
+        function showLoaderDelayed() {
+            if (loaderOverlay && !loaderOverlay.classList.contains('hidden')) {
+                // Если оверлей уже виден, ничего не делаем
+                return;
+            }
+            // Показываем оверлей через 5 секунд, если виджет ещё не загрузился
+            loadingTimeout = setTimeout(function() {
+                if (!widgetFound && !wasOffline) {
+                    loaderOverlay.classList.remove('hidden');
+                    loaderOverlay.style.display = 'flex';
+                    if (isMobile) {
+                        updateLoaderText('Загрузка затягивается... (мобильный интернет)', 'Проверьте соединение');
+                    } else {
+                        updateLoaderText('Загрузка затягивается...', 'Проверьте соединение');
+                    }
+                }
+            }, 5000);
+        }
+
+        // -------- Функция для обнаружения виджета --------
+        function setConnected() {
+            widgetFound = true;
+            indicator.classList.remove('loading', 'offline');
+            indicator.style.background = '#4CAF50';
+            indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
+            title.innerHTML = 'Феон на связи';
+            statusText.textContent = 'Соединение установлено';
+            statusText.classList.remove('offline-text', 'loading-text');
+            hintText.classList.remove('hidden');
+            vkButton.classList.add('hidden');
+
+            // Скрываем оверлей загрузки
+            hideLoader();
+        }
+
+        function checkWidget() {
+            if (widgetFound) return true;
+            
+            var root = document.getElementById('botman-webchat-root');
+            if (root && root.offsetWidth > 0) {
+                var trigger = root.querySelector('.bwc-trigger');
+                if (trigger && trigger.offsetWidth > 0 && trigger.offsetHeight > 0) {
+                    setConnected();
+                    return true;
+                }
+                if (root.shadowRoot) {
+                    var shadowTrigger = root.shadowRoot.querySelector('.bwc-trigger');
+                    if (shadowTrigger && shadowTrigger.offsetWidth > 0) {
+                        setConnected();
+                        return true;
+                    }
+                }
+            }
+            
+            var triggers = document.querySelectorAll('.bwc-trigger');
+            for (var i = 0; i < triggers.length; i++) {
+                if (triggers[i].offsetWidth > 0 && triggers[i].offsetHeight > 0) {
+                    setConnected();
+                    return true;
+                }
+            }
+            
+            return false;
+        }
+
+        function showOnlineNoBotman() {
+            wasOffline = false;
+            indicator.classList.remove('offline');
+            indicator.classList.add('loading');
+            indicator.style.background = '#ff9800';
+            indicator.style.boxShadow = '0 0 12px rgba(255, 152, 0, 0.8)';
+            title.innerHTML = 'Феон на связи';
+            
+            var connText = '';
+            if (isMobile) {
+                connText = ' (мобильный интернет)';
+            } else if (connectionType === 'wifi') {
+                connText = ' (Wi-Fi)';
+            }
+            
+            statusText.textContent = 'Нестабильное соединение' + connText;
+            statusText.classList.remove('offline-text');
+            statusText.classList.add('loading-text');
+            hintText.classList.add('hidden');
+            vkButton.classList.remove('hidden');
+            // Оверлей уже скрыт или скрываем
+            hideLoader();
+        }
+
+        function showOffline() {
+            wasOffline = true;
+            indicator.classList.add('offline');
+            indicator.classList.remove('loading');
+            indicator.style.background = '#f44336';
+            indicator.style.boxShadow = '0 0 12px rgba(244, 67, 54, 0.8)';
+            title.innerHTML = 'Феон офлайн';
+            statusText.textContent = 'Отсутствует соединение';
+            statusText.classList.add('offline-text');
+            statusText.classList.remove('loading-text');
+            hintText.classList.add('hidden');
+            vkButton.classList.add('hidden');
+            // Скрываем оверлей, так как нет соединения
+            hideLoader();
+        }
+
+        function pingInternet(callback) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('HEAD', 'https://feon1.github.io/chat/index.html?nocache=' + Date.now(), true);
+            xhr.timeout = 5000;
+            xhr.onload = function() { callback(true); };
+            xhr.onerror = function() { callback(false); };
+            xhr.ontimeout = function() { callback(false); };
+            try { xhr.send(); } catch(e) { callback(false); }
+        }
+
+        // -------- Старт --------
+        pingInternet(function(online) {
+            if (!online) {
+                showOffline();
+                return;
+            }
+            statusText.textContent = 'Чат загружается...';
+            statusText.classList.add('loading-text');
+            // Показываем индикатор загрузки с задержкой
+            showLoaderDelayed();
+        });
+
+        // Проверяем виджет
+        var checkCount = 0;
+        var widgetInterval = setInterval(function() {
+            if (wasOffline) return;
+            if (checkWidget()) {
+                clearInterval(widgetInterval);
+                // Если виджет найден, скрываем оверлей
+                hideLoader();
+            } else {
+                checkCount++;
+                if (checkCount === 20) { // ~20 секунд
+                    showOnlineNoBotman();
+                    // Скрываем оверлей, так как показали статус
+                    hideLoader();
+                }
+            }
+        }, 1000);
+
+        // Проверка сети каждые 15 секунд
+        setInterval(function() {
+            pingInternet(function(online) {
+                if (!online && !wasOffline) {
+                    showOffline();
+                } else if (online && wasOffline) {
+                    location.reload();
+                }
+            });
+        }, 15000);
+
+        window.addEventListener('offline', function() { showOffline(); });
+        window.addEventListener('online', function() {
+            setTimeout(function() {
+                pingInternet(function(online) {
+                    if (online && wasOffline) location.reload();
+                });
+            }, 1000);
+        });
+
+        // Дополнительно: если страница уже загружена и виджет не появился через 30 сек, показываем оверлей (если скрыт)
+        setTimeout(function() {
+            if (!widgetFound && !wasOffline && loaderOverlay && loaderOverlay.classList.contains('hidden')) {
+                loaderOverlay.classList.remove('hidden');
+                loaderOverlay.style.display = 'flex';
+                if (isMobile) {
+                    updateLoaderText('Загрузка всё ещё продолжается... (мобильный интернет)', 'Пожалуйста, подождите');
+                } else {
+                    updateLoaderText('Загрузка всё ещё продолжается...', 'Пожалуйста, подождите');
+                }
+            }
+        }, 30000);
+    })();
+    </script>
+</body>
+</html>
