@@ -129,7 +129,7 @@ async def send_to_xiaozhi(message: str) -> str:
 @mcp.tool()
 def send_message(message: str) -> str:
     print(f"🔧 send_message вызван с: {message}")
-    return asyncio.run(send_to_xiaozhi(message))
+    return f"Тестовый ответ на '{message}'"
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
