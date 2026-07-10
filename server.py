@@ -13,38 +13,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ---- Создаём MCP-сервер и регистрируем инструменты ДО получения http_app ----
 mcp = FastMCP("Xiaozhi Direct Adapter")
-app = mcp.http_app()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["mcp-session-id"],
-)
-
-async def options_mcp(request: Request):
-    return Response(
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Accept, mcp-session-id",
-            "Access-Control-Expose-Headers": "mcp-session-id",
-        }
-    )
-
-app.add_route("/mcp", options_mcp, methods=["OPTIONS"])
-
-async def root(request: Request):
-    return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter"})
-
-app.add_route("/", root, methods=["GET", "HEAD"])
-
-print(f"🐍 Python version: {sys.version}")
-print(f"📦 websockets version: {websockets.__version__}")
 
 XIAOZHI_WS_URL = os.getenv("XIAOZHI_WS_URL", "wss://api.tenclass.net/xiaozhi/v1/")
 XIAOZHI_TOKEN = os.getenv("XIAOZHI_TOKEN", "")
@@ -141,7 +111,7 @@ async def send_to_xiaozhi(message: str) -> str:
         print(f"❌ Ошибка подключения к Xiaozhi: {e}")
         return f"❌ Ошибка подключения к Xiaozhi: {e}"
 
-# ---- Явная регистрация инструментов через Tool.from_function ----
+# ---- Регистрация инструментов (ДО получения http_app) ----
 def send_message_impl(message: str) -> str:
     print(f"🔧 send_message_impl вызван с: {message}")
     return asyncio.run(send_to_xiaozhi(message))
@@ -156,6 +126,38 @@ ping_tool = Tool.from_function(ping_impl, name="ping")
 mcp.add_tool(ping_tool)
 
 print("✅ Инструменты зарегистрированы: send_message, ping")
+
+# ---- Теперь получаем HTTP-приложение ----
+app = mcp.http_app()
+
+# ---- Настраиваем CORS и дополнительные маршруты ----
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["mcp-session-id"],
+)
+
+async def options_mcp(request: Request):
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Accept, mcp-session-id",
+            "Access-Control-Expose-Headers": "mcp-session-id",
+        }
+    )
+
+app.add_route("/mcp", options_mcp, methods=["OPTIONS"])
+
+async def root(request: Request):
+    return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter"})
+
+app.add_route("/", root, methods=["GET", "HEAD"])
+
 print("✅ Инициализация завершена, запускаю сервер...")
 
 if __name__ == "__main__":
