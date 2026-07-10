@@ -4,6 +4,7 @@ import os
 import websockets
 from fastmcp import FastMCP
 from starlette.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
 import uvicorn
 from dotenv import load_dotenv
 
@@ -14,12 +15,21 @@ app = mcp.http_app()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # разрешаем запросы с любых доменов
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["mcp-session-id"],
 )
+
+# ---- Добавляем корневой маршрут для health check ----
+async def root(request):
+    return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter"})
+
+app.add_route("/", root, methods=["GET", "HEAD"])
+
+# ---- Логируем версию websockets ----
+print(f"🔍 websockets version: {websockets.__version__}")
 
 XIAOZHI_WS_URL = os.getenv("XIAOZHI_WS_URL", "wss://api.tenclass.net/xiaozhi/v1/")
 XIAOZHI_TOKEN = os.getenv("XIAOZHI_TOKEN", "")
@@ -38,7 +48,15 @@ async def send_to_xiaozhi(message: str) -> str:
     ws_url = f"{XIAOZHI_WS_URL}?token={XIAOZHI_TOKEN}"
 
     try:
-        async with websockets.connect(ws_url, extra_headers=headers) as websocket:
+        # Универсальное подключение с поддержкой разных версий websockets
+        if hasattr(websockets, '__version__') and websockets.__version__.startswith('10.'):
+            # Для версии 10.x используем additional_headers
+            connect_method = websockets.connect(ws_url, additional_headers=headers)
+        else:
+            # Для версии 11+ используем extra_headers
+            connect_method = websockets.connect(ws_url, extra_headers=headers)
+        
+        async with connect_method as websocket:
             hello = {
                 "type": "hello",
                 "version": 1,
