@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-import sys
+import uuid
 import websockets
 from fastapi import FastAPI, Request
 from starlette.middleware.cors import CORSMiddleware
@@ -22,6 +22,22 @@ app.add_middleware(
     expose_headers=["mcp-session-id"],
 )
 
+# ---- Хранилище сессий ----
+sessions = {}
+
+# ---- Конфигурация Xiaozhi ----
+XIAOZHI_WS_URL = os.getenv("XIAOZHI_WS_URL", "wss://api.tenclass.net/xiaozhi/v1/")
+XIAOZHI_TOKEN = os.getenv("XIAOZHI_TOKEN", "")
+if not XIAOZHI_TOKEN:
+    print("⚠️  XIAOZHI_TOKEN не задан!")
+else:
+    print(f"✅ XIAOZHI_TOKEN загружен: {XIAOZHI_TOKEN[:10]}...")
+
+DEVICE_ID = os.getenv("DEVICE_ID", "e0:2e:0b:ae:79:ea")
+CLIENT_ID = os.getenv("CLIENT_ID", "9cc3e5e4-adcf-4eff-8d23-95d4eaa21020")
+print(f"📱 Device ID: {DEVICE_ID}")
+print(f"📱 Client ID: {CLIENT_ID}")
+
 @app.options("/mcp")
 async def options_mcp():
     return Response(
@@ -37,19 +53,6 @@ async def options_mcp():
 @app.get("/")
 async def root():
     return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter"})
-
-# ---- Конфигурация Xiaozhi ----
-XIAOZHI_WS_URL = os.getenv("XIAOZHI_WS_URL", "wss://api.tenclass.net/xiaozhi/v1/")
-XIAOZHI_TOKEN = os.getenv("XIAOZHI_TOKEN", "")
-if not XIAOZHI_TOKEN:
-    print("⚠️  XIAOZHI_TOKEN не задан!")
-else:
-    print(f"✅ XIAOZHI_TOKEN загружен: {XIAOZHI_TOKEN[:10]}...")
-
-DEVICE_ID = os.getenv("DEVICE_ID", "e0:2e:0b:ae:79:ea")
-CLIENT_ID = os.getenv("CLIENT_ID", "9cc3e5e4-adcf-4eff-8d23-95d4eaa21020")
-print(f"📱 Device ID: {DEVICE_ID}")
-print(f"📱 Client ID: {CLIENT_ID}")
 
 async def send_to_xiaozhi(message: str) -> str:
     print(f"📨 send_to_xiaozhi called with: {message}")
@@ -134,15 +137,20 @@ async def send_to_xiaozhi(message: str) -> str:
         print(f"❌ Ошибка подключения к Xiaozhi: {e}")
         return f"❌ Ошибка подключения к Xiaozhi: {e}"
 
-# ---- Обработчик MCP-запросов (JSON-RPC) ----
+# ---- Обработчик MCP-запросов (JSON-RPC) с поддержкой сессий ----
 @app.post("/mcp")
 async def mcp_handler(request: Request):
     try:
         body = await request.json()
         print(f"📩 POST /mcp body: {body}")
         method = body.get("method")
+        session_id = request.headers.get("mcp-session-id")
+
         if method == "initialize":
-            return JSONResponse({
+            # Генерируем новый session-id
+            new_session_id = str(uuid.uuid4()).replace("-", "")
+            sessions[new_session_id] = {"active": True}
+            response_data = {
                 "jsonrpc": "2.0",
                 "id": body.get("id"),
                 "result": {
@@ -150,8 +158,20 @@ async def mcp_handler(request: Request):
                     "capabilities": {},
                     "serverInfo": {"name": "Xiaozhi Adapter", "version": "1.0.0"}
                 }
-            })
-        elif method == "tools/call":
+            }
+            response = JSONResponse(response_data)
+            response.headers["mcp-session-id"] = new_session_id
+            return response
+
+        # Проверяем session-id для остальных методов
+        if not session_id or session_id not in sessions:
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "error": {"code": -32000, "message": "Bad Request: No valid session ID provided"}
+            }, status_code=400)
+
+        if method == "tools/call":
             params = body.get("params", {})
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
