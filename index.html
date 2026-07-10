@@ -13,7 +13,6 @@
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
             min-height: 100vh;
             display: flex;
-            flex-direction: column;
             justify-content: center;
             align-items: center;
             background-image: url('https://raw.githubusercontent.com/Feon1/chat/refs/heads/main/background.jpg');
@@ -21,7 +20,6 @@
             background-position: center;
             background-attachment: fixed;
             padding: 20px;
-            position: relative;
         }
         body::before {
             content: '';
@@ -34,24 +32,27 @@
             z-index: 0;
         }
 
-        /* ----- Центральный контент (без карточки) ----- */
-        .content {
+        /* ----- Центральный блок ----- */
+        .main-card {
             position: relative;
             z-index: 1;
-            text-align: center;
-            color: #fff;
-            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
             max-width: 600px;
             width: 100%;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(8px);
+            border-radius: 28px;
+            padding: 40px 30px 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            text-align: center;
         }
-        .status-line {
+        .main-card .status-line {
             display: flex;
             align-items: center;
             justify-content: center;
             gap: 12px;
             margin-bottom: 12px;
         }
-        .indicator {
+        .main-card .indicator {
             width: 16px;
             height: 16px;
             border-radius: 50%;
@@ -60,12 +61,12 @@
             flex-shrink: 0;
             transition: background 0.3s, box-shadow 0.3s;
         }
-        .indicator.offline {
+        .main-card .indicator.offline {
             background: #f44336;
             box-shadow: 0 0 12px rgba(244, 67, 54, 0.8);
             animation: pulse-red 1.5s infinite;
         }
-        .indicator.loading {
+        .main-card .indicator.loading {
             background: #ff9800;
             box-shadow: 0 0 12px rgba(255, 152, 0, 0.8);
             animation: pulse-yellow 1s infinite;
@@ -78,27 +79,29 @@
             0%, 100% { box-shadow: 0 0 8px rgba(255, 152, 0, 0.6); }
             50% { box-shadow: 0 0 20px rgba(255, 152, 0, 1); }
         }
-        .title {
+        .main-card .title {
             font-size: 32px;
             font-weight: 700;
+            color: #2d3436;
             margin: 0;
         }
-        .subtitle {
+        .main-card .subtitle {
             font-size: 16px;
-            color: #d4c5ff;
+            color: #6c5ce7;
             font-weight: 500;
             margin: 4px 0 12px;
         }
-        .status-text {
+        .main-card .status-text {
             font-size: 15px;
+            color: #555;
             margin-bottom: 8px;
             min-height: 24px;
         }
-        .status-text.offline-text { color: #ffcdd2; }
-        .status-text.loading-text { color: #ffe0b2; }
-        .hint-text {
+        .main-card .status-text.offline-text { color: #f44336; }
+        .main-card .status-text.loading-text { color: #ff9800; }
+        .main-card .hint-text {
             font-size: 14px;
-            opacity: 0.9;
+            color: #888;
             margin-bottom: 20px;
         }
 
@@ -402,16 +405,19 @@
             .bwc-launcher .icon {
                 font-size: 20px;
             }
-            .title {
-                font-size: 26px;
-            }
+            .main-card { padding: 30px 20px; }
+            .main-card .title { font-size: 26px; }
+            .footer-link { font-size: 12px; }
+            .footer-links { bottom: 12px; gap: 8px; }
+            .footer-donate { font-size: 12px; }
+            .footer-divider { font-size: 12px; }
         }
     </style>
 </head>
 <body>
 
-    <!-- Центральный контент (без карточки) -->
-    <div class="content">
+    <!-- Центральный блок -->
+    <div class="main-card">
         <div class="status-line">
             <div class="indicator" id="indicator"></div>
             <h1 class="title">Феон</h1>
@@ -487,21 +493,36 @@
             var statusText = document.getElementById('statusText');
             var hintText = document.getElementById('hintText');
 
-            // Адрес адаптера (относительный)
+            // ---- Адрес адаптера ----
             var ADAPTER_URL = 'https://new-chat-adapter.onrender.com/mcp';
+            console.log('[LOG] ADAPTER_URL =', ADAPTER_URL);
 
-            // ---- Проверка связи ----
+            // ---- Проверка связи с адаптером ----
             function pingAdapter(callback) {
+                console.log('[LOG] Проверка доступности адаптера...');
                 var xhr = new XMLHttpRequest();
                 xhr.open('HEAD', ADAPTER_URL, true);
                 xhr.timeout = 5000;
-                xhr.onload = function() { callback(true); };
-                xhr.onerror = function() { callback(false); };
-                xhr.ontimeout = function() { callback(false); };
-                try { xhr.send(); } catch(e) { callback(false); }
+                xhr.onload = function() {
+                    console.log('[LOG] Ответ от адаптера: статус', xhr.status);
+                    callback(true);
+                };
+                xhr.onerror = function() {
+                    console.error('[ERROR] Ошибка соединения с адаптером');
+                    callback(false);
+                };
+                xhr.ontimeout = function() {
+                    console.error('[ERROR] Таймаут при проверке адаптера');
+                    callback(false);
+                };
+                try { xhr.send(); } catch(e) {
+                    console.error('[ERROR] Исключение при проверке адаптера:', e);
+                    callback(false);
+                }
             }
 
             function setOnline() {
+                console.log('[LOG] Установлен статус ONLINE');
                 indicator.classList.remove('loading', 'offline');
                 indicator.style.background = '#4CAF50';
                 indicator.style.boxShadow = '0 0 12px rgba(76, 175, 80, 0.8)';
@@ -511,6 +532,7 @@
             }
 
             function setOffline() {
+                console.log('[LOG] Установлен статус OFFLINE');
                 indicator.classList.add('offline');
                 indicator.classList.remove('loading');
                 indicator.style.background = '#f44336';
@@ -522,6 +544,7 @@
             }
 
             function setLoading() {
+                console.log('[LOG] Установлен статус LOADING');
                 indicator.classList.add('loading');
                 indicator.classList.remove('offline');
                 indicator.style.background = '#ff9800';
@@ -531,6 +554,7 @@
                 statusText.classList.remove('offline-text');
             }
 
+            // ---- Проверка при загрузке ----
             setLoading();
             pingAdapter(function(online) {
                 if (online) {
@@ -540,6 +564,7 @@
                 }
             });
 
+            // ---- Периодическая проверка ----
             setInterval(function() {
                 pingAdapter(function(online) {
                     if (online) {
@@ -551,9 +576,11 @@
             }, 15000);
 
             window.addEventListener('offline', function() {
+                console.log('[LOG] Браузер перешел в офлайн-режим');
                 setOffline();
             });
             window.addEventListener('online', function() {
+                console.log('[LOG] Браузер вернулся в онлайн-режим');
                 setLoading();
                 pingAdapter(function(online) {
                     if (online) {
@@ -566,12 +593,14 @@
 
             // ---- Открытие/закрытие чата ----
             function openChat() {
+                console.log('[LOG] Открыт чат');
                 chatWidget.classList.add('open');
                 launcherBtn.classList.add('hidden');
                 hintText.textContent = 'Чат открыт';
                 messageInput.focus();
             }
             function closeChat() {
+                console.log('[LOG] Закрыт чат');
                 chatWidget.classList.remove('open');
                 launcherBtn.classList.remove('hidden');
                 hintText.textContent = 'Нажмите на значок чата';
@@ -583,6 +612,7 @@
 
             // ---- Сообщения ----
             function addMessage(text, sender, time) {
+                console.log('[LOG] Добавлено сообщение от', sender, ':', text);
                 var div = document.createElement('div');
                 div.className = 'message ' + sender;
                 var content = document.createElement('div');
@@ -601,13 +631,19 @@
                 messages.scrollTop = messages.scrollHeight;
             }
 
-            // ---- Отправка ----
+            // ---- Отправка сообщения с логированием ----
             async function sendMessage() {
                 var text = messageInput.value.trim();
-                if (!text) return;
+                if (!text) {
+                    console.warn('[WARN] Пустое сообщение, отправка отменена');
+                    return;
+                }
+
+                console.log('[LOG] Отправка сообщения:', text);
 
                 var isOnline = !indicator.classList.contains('offline');
                 if (!isOnline) {
+                    console.warn('[WARN] Нет соединения с адаптером, сообщение не отправлено');
                     addMessage('Нет соединения с сервером. Проверьте интернет.', 'bot');
                     return;
                 }
@@ -618,6 +654,7 @@
                 showTyping(true);
 
                 try {
+                    console.log('[LOG] Шаг 1: Инициализация MCP');
                     var initPayload = {
                         jsonrpc: "2.0",
                         id: 1,
@@ -628,6 +665,9 @@
                             clientInfo: { name: "web-client", version: "1.0.0" }
                         }
                     };
+                    console.log('[LOG] Отправка запроса инициализации на', ADAPTER_URL);
+                    console.log('[LOG] Payload:', JSON.stringify(initPayload, null, 2));
+
                     var initRes = await fetch(ADAPTER_URL, {
                         method: 'POST',
                         headers: {
@@ -636,13 +676,22 @@
                         },
                         body: JSON.stringify(initPayload)
                     });
+                    console.log('[LOG] Ответ инициализации: статус', initRes.status);
+                    console.log('[LOG] Заголовки ответа:', [...initRes.headers.entries()]);
+
                     if (!initRes.ok) {
                         var errText = await initRes.text();
+                        console.error('[ERROR] Инициализация не удалась:', initRes.status, errText);
                         throw new Error('Инициализация не удалась: ' + initRes.status + ' - ' + errText);
                     }
                     var sessionId = initRes.headers.get('mcp-session-id');
-                    if (!sessionId) throw new Error('Нет session-id');
+                    console.log('[LOG] Получен session-id:', sessionId);
+                    if (!sessionId) {
+                        console.error('[ERROR] session-id отсутствует в заголовках');
+                        throw new Error('Нет session-id');
+                    }
 
+                    console.log('[LOG] Шаг 2: Вызов инструмента send_message');
                     var callPayload = {
                         jsonrpc: "2.0",
                         id: 2,
@@ -652,6 +701,9 @@
                             arguments: { message: text }
                         }
                     };
+                    console.log('[LOG] Отправка запроса вызова на', ADAPTER_URL);
+                    console.log('[LOG] Payload:', JSON.stringify(callPayload, null, 2));
+
                     var callRes = await fetch(ADAPTER_URL, {
                         method: 'POST',
                         headers: {
@@ -661,29 +713,54 @@
                         },
                         body: JSON.stringify(callPayload)
                     });
+                    console.log('[LOG] Ответ вызова: статус', callRes.status);
+                    console.log('[LOG] Заголовки ответа:', [...callRes.headers.entries()]);
+
                     if (!callRes.ok) {
                         var errText = await callRes.text();
+                        console.error('[ERROR] Вызов не удался:', callRes.status, errText);
                         throw new Error('Вызов не удался: ' + callRes.status + ' - ' + errText);
                     }
 
                     var raw = await callRes.text();
+                    console.log('[LOG] Сырой ответ от адаптера:\n', raw);
+
+                    // Парсим SSE
                     var lines = raw.split('\n');
                     var jsonData = null;
                     for (var line of lines) {
                         if (line.startsWith('data: ')) {
+                            var jsonString = line.substring(6).trim();
+                            console.log('[LOG] Найдена data-строка:', jsonString);
                             try {
-                                jsonData = JSON.parse(line.substring(6).trim());
+                                jsonData = JSON.parse(jsonString);
+                                console.log('[LOG] Распарсенный JSON:', jsonData);
                                 break;
-                            } catch(e) {}
+                            } catch(e) {
+                                console.warn('[WARN] Не удалось распарсить JSON из data-строки:', e);
+                            }
                         }
                     }
+
                     var reply = 'Нет ответа';
                     if (jsonData) {
-                        reply = jsonData.result?.content?.[0]?.text || jsonData.result?.structuredContent?.result || 'Нет ответа';
+                        if (jsonData.result && jsonData.result.content && jsonData.result.content[0]) {
+                            reply = jsonData.result.content[0].text || 'Пустой текст';
+                        } else if (jsonData.result && jsonData.result.structuredContent && jsonData.result.structuredContent.result) {
+                            reply = jsonData.result.structuredContent.result;
+                        } else if (jsonData.result) {
+                            reply = JSON.stringify(jsonData.result);
+                        }
+                        console.log('[LOG] Извлечён ответ:', reply);
+                    } else {
+                        console.warn('[WARN] Не удалось извлечь data из ответа');
                     }
+
                     showTyping(false);
                     addMessage(reply, 'bot');
+
                 } catch (err) {
+                    console.error('[ERROR] Ошибка в sendMessage:', err);
                     showTyping(false);
                     addMessage('Ошибка: ' + err.message, 'bot');
                 } finally {
