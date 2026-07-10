@@ -438,14 +438,13 @@
             const statusText = document.getElementById('statusText');
             const hintText = document.getElementById('hintText');
 
-            // ---- Адреса адаптера ----
-            const ADAPTER_ROOT = 'https://docker-new-chat.onrender.com/mcp; // без /mcp
-            const ADAPTER_URL = ADAPTER_ROOT + '/mcp';
+            // ---- Адрес адаптера ----
+            const ADAPTER_URL = 'https://docker-new-chat.onrender.com/mcp';
 
             // ---- Проверка связи (GET на корень) ----
             function pingAdapter(cb) {
                 const xhr = new XMLHttpRequest();
-                xhr.open('GET', ADAPTER_ROOT, true);
+                xhr.open('GET', 'https://docker-new-chat.onrender.com', true);
                 xhr.timeout = 5000;
                 xhr.onload = function() {
                     if (this.status === 200) cb(true);
@@ -583,7 +582,7 @@
                             id: 2,
                             method: "tools/call",
                             params: {
-                                name: "send_message",
+                                name: "send_message_fn",
                                 arguments: { message: text }
                             }
                         })
