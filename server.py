@@ -10,14 +10,11 @@ from starlette.requests import Request
 import uvicorn
 from dotenv import load_dotenv
 
-# ---- Загрузка переменных окружения ----
 load_dotenv()
 
-# ---- Создание MCP-сервера ----
 mcp = FastMCP("Xiaozhi Direct Adapter")
 app = mcp.http_app()
 
-# ---- Настройка CORS ----
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,7 +24,6 @@ app.add_middleware(
     expose_headers=["mcp-session-id"],
 )
 
-# ---- Явный обработчик OPTIONS для /mcp (чтобы избежать 405) ----
 async def options_mcp(request: Request):
     return Response(
         status_code=200,
@@ -41,17 +37,14 @@ async def options_mcp(request: Request):
 
 app.add_route("/mcp", options_mcp, methods=["OPTIONS"])
 
-# ---- Health check ----
 async def root(request: Request):
     return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter"})
 
 app.add_route("/", root, methods=["GET", "HEAD"])
 
-# ---- Диагностика окружения ----
 print(f"🐍 Python version: {sys.version}")
 print(f"📦 websockets version: {websockets.__version__}")
 
-# ---- Конфигурация Xiaozhi ----
 XIAOZHI_WS_URL = os.getenv("XIAOZHI_WS_URL", "wss://api.tenclass.net/xiaozhi/v1/")
 XIAOZHI_TOKEN = os.getenv("XIAOZHI_TOKEN", "")
 if not XIAOZHI_TOKEN:
@@ -64,7 +57,6 @@ CLIENT_ID = os.getenv("CLIENT_ID", "9cc3e5e4-adcf-4eff-8d23-95d4eaa21020")
 print(f"📱 Device ID: {DEVICE_ID}")
 print(f"📱 Client ID: {CLIENT_ID}")
 
-# ---- Функция отправки сообщения в Xiaozhi ----
 async def send_to_xiaozhi(message: str) -> str:
     print(f"📨 send_to_xiaozhi called with: {message}")
     headers = {
@@ -76,7 +68,6 @@ async def send_to_xiaozhi(message: str) -> str:
     print(f"🔗 Connecting to: {ws_url[:60]}...")
 
     try:
-        # Универсальный способ: передаём заголовки как список кортежей
         headers_list = list(headers.items())
         async with websockets.connect(ws_url, extra_headers=headers_list) as websocket:
             print("✅ WebSocket connected to Xiaozhi")
@@ -150,28 +141,35 @@ async def send_to_xiaozhi(message: str) -> str:
         print(f"❌ Ошибка подключения к Xiaozhi: {e}")
         return f"❌ Ошибка подключения к Xiaozhi: {e}"
 
-# ---- Инструмент MCP ----
+# ---- Явная регистрация инструментов ----
 @mcp.tool()
 def send_message(message: str) -> str:
     print(f"🔧 send_message вызван с: {message}")
     return asyncio.run(send_to_xiaozhi(message))
 
-# ---- Тестовый инструмент (для диагностики) ----
 @mcp.tool()
 def ping() -> str:
     return "pong"
 
-# ---- Вывод зарегистрированных инструментов ----
-print("📋 Зарегистрированные инструменты:")
-if hasattr(mcp, '_tools'):
-    for tool in mcp._tools:
-        print(f"  - {tool.name}: {tool.description}")
-else:
-    print("  (список не получен)")
+# ---- Диагностика: выводим все атрибуты mcp ----
+print("🔍 Атрибуты mcp:", dir(mcp))
+print("🔍 Тип mcp:", type(mcp))
+
+# ---- Попытка получить инструменты разными способами ----
+try:
+    if hasattr(mcp, '_tools'):
+        print(f"📋 _tools: {mcp._tools}")
+    if hasattr(mcp, 'tools'):
+        print(f"📋 tools: {mcp.tools}")
+    if hasattr(mcp, '_tool_manager'):
+        print(f"📋 _tool_manager: {mcp._tool_manager}")
+        if hasattr(mcp._tool_manager, '_tools'):
+            print(f"📋 _tool_manager._tools: {mcp._tool_manager._tools}")
+except Exception as e:
+    print(f"⚠️ Ошибка при получении инструментов: {e}")
 
 print("✅ Инициализация завершена, запускаю сервер...")
 
-# ---- Запуск ----
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
