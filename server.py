@@ -3,17 +3,15 @@ import json
 import os
 import sys
 import websockets
-from fastmcp import FastMCP
+from fastapi import FastAPI, Request
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, Response
-from starlette.requests import Request
 import uvicorn
 from dotenv import load_dotenv
 
 load_dotenv()
 
-mcp = FastMCP("Xiaozhi Direct Adapter")
-app = mcp.http_app()
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,7 +22,8 @@ app.add_middleware(
     expose_headers=["mcp-session-id"],
 )
 
-async def options_mcp(request: Request):
+@app.options("/mcp")
+async def options_mcp():
     return Response(
         status_code=200,
         headers={
@@ -35,16 +34,11 @@ async def options_mcp(request: Request):
         }
     )
 
-app.add_route("/mcp", options_mcp, methods=["OPTIONS"])
-
-async def root(request: Request):
+@app.get("/")
+async def root():
     return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter"})
 
-app.add_route("/", root, methods=["GET", "HEAD"])
-
-print(f"🐍 Python version: {sys.version}")
-print(f"📦 websockets version: {websockets.__version__}")
-
+# ---- Конфигурация Xiaozhi ----
 XIAOZHI_WS_URL = os.getenv("XIAOZHI_WS_URL", "wss://api.tenclass.net/xiaozhi/v1/")
 XIAOZHI_TOKEN = os.getenv("XIAOZHI_TOKEN", "")
 if not XIAOZHI_TOKEN:
@@ -140,18 +134,57 @@ async def send_to_xiaozhi(message: str) -> str:
         print(f"❌ Ошибка подключения к Xiaozhi: {e}")
         return f"❌ Ошибка подключения к Xiaozhi: {e}"
 
-# ---- Регистрация инструментов через декоратор с именем ----
-@mcp.tool(name="send_message")
-def send_message(message: str) -> str:
-    print(f"🔧 send_message вызван с: {message}")
-    return asyncio.run(send_to_xiaozhi(message))
-
-@mcp.tool(name="ping")
-def ping() -> str:
-    return "pong"
-
-print("✅ Инструменты зарегистрированы: send_message, ping")
-print("✅ Инициализация завершена, запускаю сервер...")
+# ---- Обработчик MCP-запросов (JSON-RPC) ----
+@app.post("/mcp")
+async def mcp_handler(request: Request):
+    try:
+        body = await request.json()
+        print(f"📩 POST /mcp body: {body}")
+        method = body.get("method")
+        if method == "initialize":
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "serverInfo": {"name": "Xiaozhi Adapter", "version": "1.0.0"}
+                }
+            })
+        elif method == "tools/call":
+            params = body.get("params", {})
+            tool_name = params.get("name")
+            arguments = params.get("arguments", {})
+            if tool_name == "send_message":
+                message = arguments.get("message", "")
+                result_text = await send_to_xiaozhi(message)
+                return JSONResponse({
+                    "jsonrpc": "2.0",
+                    "id": body.get("id"),
+                    "result": {
+                        "content": [{"type": "text", "text": result_text}],
+                        "structuredContent": {"result": result_text}
+                    }
+                })
+            else:
+                return JSONResponse({
+                    "jsonrpc": "2.0",
+                    "id": body.get("id"),
+                    "error": {"code": -32602, "message": f"Unknown tool: {tool_name}"}
+                }, status_code=400)
+        else:
+            return JSONResponse({
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "error": {"code": -32601, "message": f"Method not found: {method}"}
+            }, status_code=400)
+    except Exception as e:
+        print(f"❌ Ошибка в mcp_handler: {e}")
+        return JSONResponse({
+            "jsonrpc": "2.0",
+            "id": body.get("id") if 'body' in locals() else None,
+            "error": {"code": -32603, "message": str(e)}
+        }, status_code=500)
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
