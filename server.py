@@ -22,13 +22,12 @@ app.add_middleware(
     expose_headers=["mcp-session-id"],
 )
 
-# ---- Добавляем корневой маршрут для health check ----
+# ---- Корневой маршрут для health check ----
 async def root(request):
     return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter"})
 
 app.add_route("/", root, methods=["GET", "HEAD"])
 
-# ---- Логируем версию websockets ----
 print(f"🔍 websockets version: {websockets.__version__}")
 
 XIAOZHI_WS_URL = os.getenv("XIAOZHI_WS_URL", "wss://api.tenclass.net/xiaozhi/v1/")
@@ -48,15 +47,10 @@ async def send_to_xiaozhi(message: str) -> str:
     ws_url = f"{XIAOZHI_WS_URL}?token={XIAOZHI_TOKEN}"
 
     try:
-        # Универсальное подключение с поддержкой разных версий websockets
-        if hasattr(websockets, '__version__') and websockets.__version__.startswith('10.'):
-            # Для версии 10.x используем additional_headers
-            connect_method = websockets.connect(ws_url, additional_headers=headers)
-        else:
-            # Для версии 11+ используем extra_headers
-            connect_method = websockets.connect(ws_url, extra_headers=headers)
-        
-        async with connect_method as websocket:
+        # Универсальный способ: преобразуем словарь в список кортежей
+        headers_list = list(headers.items())
+        # Для некоторых версий нужно передавать extra_headers именно как список кортежей
+        async with websockets.connect(ws_url, extra_headers=headers_list) as websocket:
             hello = {
                 "type": "hello",
                 "version": 1,
