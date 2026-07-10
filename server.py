@@ -4,9 +4,7 @@ import os
 import sys
 import websockets
 from fastmcp import FastMCP
-from fastmcp.tools import Tool
 from starlette.middleware.cors import CORSMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse, Response
 from starlette.requests import Request
 import uvicorn
@@ -16,21 +14,6 @@ load_dotenv()
 
 mcp = FastMCP("Xiaozhi Direct Adapter")
 app = mcp.http_app()
-
-# ---- Логирование запросов ----
-class LoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        if request.method == "POST" and request.url.path == "/mcp":
-            body = await request.body()
-            try:
-                text = body.decode('utf-8')
-                print(f"📩 POST /mcp body: {text[:500]}")
-            except:
-                print(f"📩 POST /mcp body: <бинарные данные>")
-        response = await call_next(request)
-        return response
-
-app.add_middleware(LoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -157,18 +140,15 @@ async def send_to_xiaozhi(message: str) -> str:
         print(f"❌ Ошибка подключения к Xiaozhi: {e}")
         return f"❌ Ошибка подключения к Xiaozhi: {e}"
 
-def send_message_impl(message: str) -> str:
-    print(f"🔧 send_message_impl вызван с: {message}")
+# ---- Регистрация инструментов через декоратор с именем ----
+@mcp.tool(name="send_message")
+def send_message(message: str) -> str:
+    print(f"🔧 send_message вызван с: {message}")
     return asyncio.run(send_to_xiaozhi(message))
 
-def ping_impl() -> str:
+@mcp.tool(name="ping")
+def ping() -> str:
     return "pong"
-
-send_message_tool = Tool.from_function(send_message_impl, name="send_message")
-mcp.add_tool(send_message_tool)
-
-ping_tool = Tool.from_function(ping_impl, name="ping")
-mcp.add_tool(ping_tool)
 
 print("✅ Инструменты зарегистрированы: send_message, ping")
 print("✅ Инициализация завершена, запускаю сервер...")
