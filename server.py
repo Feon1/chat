@@ -7,6 +7,25 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 import uvicorn
 from dotenv import load_dotenv
+import sys
+import platform
+import fastmcp
+import uvicorn
+import websockets
+import starlette
+import dotenv
+
+print("=== Окружение на Render ===")
+print(f"Python version: {sys.version}")
+print(f"Platform: {platform.platform()}")
+print(f"fastmcp: {fastmcp.__version__}")
+print(f"uvicorn: {uvicorn.__version__}")
+print(f"websockets: {websockets.__version__}")
+print(f"starlette: {starlette.__version__}")
+try:
+    print(f"python-dotenv: {dotenv.__version__}")
+except AttributeError:
+    print("python-dotenv: версия не определена")
 
 load_dotenv()
 
