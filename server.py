@@ -36,6 +36,9 @@ CLIENT_ID = os.getenv("CLIENT_ID", "9cc3e5e4-adcf-4eff-8d23-95d4eaa21020")
 print(f"📱 Device ID: {DEVICE_ID}")
 print(f"📱 Client ID: {CLIENT_ID}")
 
+# Максимальная длина сообщения для Xiaozhi (определено тестом)
+MAX_LENGTH = 65
+
 @app.options("/mcp")
 async def options_mcp():
     return Response(
@@ -50,10 +53,15 @@ async def options_mcp():
 
 @app.get("/")
 async def root():
-    return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter (TEST MODE - NO SESSION CHECK)"})
+    return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter"})
 
 async def send_to_xiaozhi(message: str) -> str:
     print(f"📨 send_to_xiaozhi called with: {message} (len={len(message)})")
+    
+    # Проверка длины
+    if len(message) > MAX_LENGTH:
+        return f"⚠️ Запрос слишком длинный ({len(message)} символов). Пожалуйста, сократите до {MAX_LENGTH} символов."
+
     headers = {
         "Device-Id": DEVICE_ID,
         "Client-Id": CLIENT_ID,
@@ -173,7 +181,7 @@ async def mcp_handler(request: Request):
         if method == "notifications/initialized":
             return Response(status_code=200)
 
-        # ВРЕМЕННО: пропускаем проверку session-id для tools/call
+        # Для методов tools/call сессия не требуется (для упрощения)
         if method == "tools/call":
             params = body.get("params", {})
             tool_name = params.get("name")
@@ -192,6 +200,7 @@ async def mcp_handler(request: Request):
                 }
                 sse_body = f"event: message\ndata: {json.dumps(sse_data)}\n\n"
                 return Response(content=sse_body, media_type="text/event-stream")
+
             else:
                 return JSONResponse({
                     "jsonrpc": "2.0",
@@ -199,7 +208,7 @@ async def mcp_handler(request: Request):
                     "error": {"code": -32602, "message": f"Unknown tool: {tool_name}"}
                 }, status_code=400)
 
-        # Для остальных методов — проверяем сессию
+        # Если метод не tools/call и не initialize — проверяем сессию
         if not session_id or session_id not in sessions:
             return JSONResponse({
                 "jsonrpc": "2.0",
@@ -207,6 +216,7 @@ async def mcp_handler(request: Request):
                 "error": {"code": -32000, "message": "Bad Request: No valid session ID provided"}
             }, status_code=400)
 
+        # Остальные методы
         return JSONResponse({
             "jsonrpc": "2.0",
             "id": body.get("id"),
