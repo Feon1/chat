@@ -65,7 +65,6 @@ async def send_to_xiaozhi(message: str) -> str:
     try:
         async with websockets.connect(ws_url, extra_headers=headers) as websocket:
             print("✅ WebSocket connected to Xiaozhi")
-            # 1. Hello
             hello = {
                 "type": "hello",
                 "version": 1,
@@ -80,7 +79,6 @@ async def send_to_xiaozhi(message: str) -> str:
             await websocket.send(json.dumps(hello))
             print("📤 Hello sent")
 
-            # 2. Ждём session_id
             try:
                 resp = await asyncio.wait_for(websocket.recv(), timeout=5.0)
                 print(f"📩 Received: {resp[:100]}...")
@@ -96,33 +94,15 @@ async def send_to_xiaozhi(message: str) -> str:
             except Exception as e:
                 return f"❌ Ошибка при получении hello: {e}"
 
-            # 3. Отправляем текстовый запрос через listen + stt + stop
-            # Активируем прослушивание
-            listen_msg = {
+            text_msg = {
                 "type": "listen",
-                "state": "listen"
-            }
-            await websocket.send(json.dumps(listen_msg))
-            print("📤 Sent listen (state=listen)")
-
-            # Отправляем распознанный текст
-            stt_msg = {
-                "type": "stt",
+                "state": "detect",
                 "text": message,
-                "language": "ru"
+                "source": "text"
             }
-            await websocket.send(json.dumps(stt_msg))
-            print("📤 Sent stt")
+            await websocket.send(json.dumps(text_msg))
+            print("📤 Text message sent")
 
-            # Останавливаем прослушивание
-            stop_msg = {
-                "type": "listen",
-                "state": "stop"
-            }
-            await websocket.send(json.dumps(stop_msg))
-            print("📤 Sent listen (state=stop)")
-
-            # 4. Ждём ответ (llm или tts)
             full_reply = ""
             while True:
                 try:
@@ -159,9 +139,7 @@ async def send_to_xiaozhi(message: str) -> str:
                     return f"Ошибка Xiaozhi: {data.get('message', 'неизвестная')}"
                 else:
                     print(f"⚠️ Неизвестный тип сообщения: {msg_type}")
-
             print(f"✅ Full reply: {full_reply[:100]}...")
-            # 5. Штатное закрытие
             await websocket.close()
             return full_reply if full_reply else "Ответ не получен"
 
