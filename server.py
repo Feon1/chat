@@ -96,23 +96,28 @@ async def send_to_xiaozhi(message: str) -> str:
             except Exception as e:
                 return f"❌ Ошибка при получении hello: {e}"
 
-            # 3. Отправляем текстовый запрос через тип "stt" (вместо "listen/detect")
-            #    Это исправляет ошибку "Detect is only for wake words"
+            # 3. Отправляем текстовый запрос напрямую через "llm"
+            #    Это обходит ограничение "Detect is only for wake words"
             text_msg = {
-                "type": "stt",
-                "text": message,
-                "language": "ru"   # язык можно задать, если нужно
+                "type": "llm",
+                "text": message
             }
             await websocket.send(json.dumps(text_msg))
-            print("📤 Text message sent (stt)")
+            print("📤 LLM message sent")
 
-            # 4. Читаем ответы до получения tts state == "end" или "stop"
+            # 4. Читаем ответы, накапливая текст из "llm"
             full_reply = ""
+            llm_received = False
             while True:
                 try:
-                    raw = await asyncio.wait_for(websocket.recv(), timeout=30.0)
+                    raw = await asyncio.wait_for(websocket.recv(), timeout=15.0)
                 except asyncio.TimeoutError:
-                    return "⏰ Таймаут ожидания ответа от Xiaozhi"
+                    # Если за время таймаута мы получили хотя бы один "llm", возвращаем накопленный текст
+                    if full_reply:
+                        print("⏰ Таймаут, но есть ответ, возвращаем накопленный текст")
+                        return full_reply
+                    else:
+                        return "⏰ Таймаут ожидания ответа от Xiaozhi"
                 if isinstance(raw, bytes):
                     print("📩 Бинарные данные (аудио) пропущены")
                     continue
@@ -127,19 +132,20 @@ async def send_to_xiaozhi(message: str) -> str:
                 elif msg_type == "llm":
                     if "text" in data and data["text"].strip():
                         full_reply += data["text"]
+                        llm_received = True
                 elif msg_type == "tts":
                     if data.get("state") == "sentence_start":
                         if "text" in data and data["text"].strip():
                             full_reply += data["text"]
                     elif data.get("state") in ("end", "stop"):
+                        # Если пришёл "tts" с end, завершаем сразу
+                        print("✅ Получен TTS end")
                         break
                 elif msg_type == "error":
                     return f"Ошибка от Xiaozhi: {data.get('message', 'неизвестная')}"
                 elif msg_type == "alert":
-                    # Обработка предупреждений (например, слишком длинный текст)
                     return f"Ошибка Xiaozhi: {data.get('message', 'неизвестная')}"
                 else:
-                    # Неизвестный тип – игнорируем или логируем
                     print(f"⚠️ Неизвестный тип сообщения: {msg_type}")
 
             print(f"✅ Full reply: {full_reply[:100]}...")
