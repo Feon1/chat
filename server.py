@@ -93,16 +93,19 @@ async def send_to_xiaozhi(message: str) -> str:
                 return "⏰ Таймаут: сервер не ответил на hello"
             except Exception as e:
                 return f"❌ Ошибка при получении hello: {e}"
+
+            # Выбор режима отправки в зависимости от длины сообщения
             if len(message) <= 50:
-    # Короткий запрос — оставляем detect для скорости
-               text_msg = {"type": "listen", "state": "detect", "text": message, "source": "text"}
-               await websocket.send(json.dumps(text_msg))
+                # Короткий запрос — используем detect (быстрее)
+                text_msg = {"type": "listen", "state": "detect", "text": message, "source": "text"}
+                await websocket.send(json.dumps(text_msg))
+                print("📤 Отправлен detect")
             else:
-    # Длинный запрос — ручной режим
-            await websocket.send(json.dumps({"type": "listen", "state": "start", "mode": "manual"}))
-            await websocket.send(json.dumps({"type": "stt", "text": message, "language": "ru"}))
-            await websocket.send(json.dumps({"type": "listen", "state": "stop"}))
-            print("📤 Text message sent")
+                # Длинный запрос — ручной режим (без ограничения по длине)
+                await websocket.send(json.dumps({"type": "listen", "state": "start", "mode": "manual"}))
+                await websocket.send(json.dumps({"type": "stt", "text": message, "language": "ru"}))
+                await websocket.send(json.dumps({"type": "listen", "state": "stop"}))
+                print("📤 Отправлен ручной режим (start → stt → stop)")
 
             full_reply = ""
             while True:
@@ -113,7 +116,7 @@ async def send_to_xiaozhi(message: str) -> str:
                         print("⏰ Таймаут, но есть ответ, возвращаем накопленный текст")
                         return full_reply
                     else:
-                        return "⏰ Таймаут ожидания ответа "
+                        return "⏰ Таймаут ожидания ответа от Xiaozhi"
                 if isinstance(raw, bytes):
                     print("📩 Бинарные данные (аудио) пропущены")
                     continue
@@ -135,21 +138,22 @@ async def send_to_xiaozhi(message: str) -> str:
                     elif data.get("state") in ("end", "stop"):
                         break
                 elif msg_type == "error":
-                    return f"Ошибка ...: {data.get('message', 'неизвестная')}"
+                    return f"Ошибка от Xiaozhi: {data.get('message', 'неизвестная')}"
                 elif msg_type == "alert":
-                    return f"Ошибка... : {data.get('message', 'неизвестная')}"
+                    return f"Ошибка Xiaozhi: {data.get('message', 'неизвестная')}"
                 else:
                     print(f"⚠️ Неизвестный тип сообщения: {msg_type}")
+
             print(f"✅ Full reply: {full_reply[:100]}...")
             await websocket.close()
             return full_reply if full_reply else "Ответ не получен"
 
     except websockets.exceptions.ConnectionClosedError as e:
         print(f"❌ Соединение закрыто аварийно: {e}")
-        return "❌ Ошибка соединения с X"
+        return "❌ Ошибка соединения с Xiaozhi"
     except Exception as e:
-        print(f"❌ Ошибка подключения к X: {e}")
-        return f"❌ Ошибка подключения к X: {e}"
+        print(f"❌ Ошибка подключения к Xiaozhi: {e}")
+        return f"❌ Ошибка подключения к Xiaozhi: {e}"
 
 @app.post("/mcp")
 async def mcp_handler(request: Request):
