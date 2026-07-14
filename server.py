@@ -112,7 +112,7 @@ async def send_to_xiaozhi(message: str) -> str:
                         print("⏰ Таймаут, но есть ответ, возвращаем накопленный текст")
                         return full_reply
                     else:
-                        return "⏰ Таймаут ожидания ответа от Xiaozhi"
+                        return "⏰ Таймаут ожидания ответа "
                 if isinstance(raw, bytes):
                     print("📩 Бинарные данные (аудио) пропущены")
                     continue
@@ -134,9 +134,9 @@ async def send_to_xiaozhi(message: str) -> str:
                     elif data.get("state") in ("end", "stop"):
                         break
                 elif msg_type == "error":
-                    return f"Ошибка от Xiaozhi: {data.get('message', 'неизвестная')}"
+                    return f"Ошибка ...: {data.get('message', 'неизвестная')}"
                 elif msg_type == "alert":
-                    return f"Ошибка Xiaozhi: {data.get('message', 'неизвестная')}"
+                    return f"Ошибка... : {data.get('message', 'неизвестная')}"
                 else:
                     print(f"⚠️ Неизвестный тип сообщения: {msg_type}")
             print(f"✅ Full reply: {full_reply[:100]}...")
@@ -145,10 +145,10 @@ async def send_to_xiaozhi(message: str) -> str:
 
     except websockets.exceptions.ConnectionClosedError as e:
         print(f"❌ Соединение закрыто аварийно: {e}")
-        return "❌ Ошибка соединения с Xiaozhi"
+        return "❌ Ошибка соединения с X"
     except Exception as e:
-        print(f"❌ Ошибка подключения к Xiaozhi: {e}")
-        return f"❌ Ошибка подключения к Xiaozhi: {e}"
+        print(f"❌ Ошибка подключения к X: {e}")
+        return f"❌ Ошибка подключения к X: {e}"
 
 @app.post("/mcp")
 async def mcp_handler(request: Request):
