@@ -3,6 +3,7 @@ import json
 import os
 import uuid
 import websockets
+import aiohttp
 from fastapi import FastAPI, Request
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, Response
@@ -36,6 +37,11 @@ CLIENT_ID = os.getenv("CLIENT_ID", "9cc3e5e4-adcf-4eff-8d23-95d4eaa21020")
 print(f"📱 Device ID: {DEVICE_ID}")
 print(f"📱 Client ID: {CLIENT_ID}")
 
+# Конфигурация внешнего API (DeepSeek/OpenAI)
+EXTERNAL_API_URL = os.getenv("EXTERNAL_API_URL", "https://api.deepseek.com/v1/chat/completions")
+EXTERNAL_API_KEY = os.getenv("EXTERNAL_API_KEY", "")
+EXTERNAL_MODEL = os.getenv("EXTERNAL_MODEL", "deepseek-chat")
+
 @app.options("/mcp")
 async def options_mcp():
     return Response(
@@ -52,8 +58,37 @@ async def options_mcp():
 async def root():
     return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter"})
 
+async def call_external_api(prompt: str) -> str:
+    if not EXTERNAL_API_KEY:
+        return "⚠️ Внешний API не настроен. Установите EXTERNAL_API_KEY."
+    
+    headers = {
+        "Authorization": f"Bearer {EXTERNAL_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": EXTERNAL_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7,
+        "max_tokens": 1000
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(EXTERNAL_API_URL, headers=headers, json=payload) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("choices", [{}])[0].get("message", {}).get("content", "Ответ не получен")
+                else:
+                    error_text = await resp.text()
+                    return f"Ошибка API: {resp.status} - {error_text}"
+    except Exception as e:
+        return f"Ошибка вызова внешнего API: {e}"
+
 async def send_to_xiaozhi(message: str) -> str:
     print(f"📨 send_to_xiaozhi called with: {message}")
+    if len(message) > 50:
+        return await call_external_api(message)
+
     headers = {
         "Device-Id": DEVICE_ID,
         "Client-Id": CLIENT_ID,
@@ -94,22 +129,9 @@ async def send_to_xiaozhi(message: str) -> str:
             except Exception as e:
                 return f"❌ Ошибка при получении hello: {e}"
 
-            # Выбор режима отправки в зависимости от длины сообщения
-            if len(message) <= 50:
-                # Короткий запрос — используем detect (быстрее)
-                text_msg = {"type": "listen", "state": "detect", "text": message, "source": "text"}
-                await websocket.send(json.dumps(text_msg))
-                print("📤 Отправлен detect")
-            else:
-                # Длинный запрос — разбиваем на чанки по 50 символов и отправляем через detect
-                chunk_size = 50
-                chunks = [message[i:i+chunk_size] for i in range(0, len(message), chunk_size)]
-                print(f"📤 Разбито на {len(chunks)} частей")
-                for i, chunk in enumerate(chunks):
-                    print(f"📤 Отправка части {i+1}/{len(chunks)}: {chunk[:20]}...")
-                    await websocket.send(json.dumps({"type": "listen", "state": "detect", "text": chunk, "source": "text"}))
-                    # Небольшая задержка между частями, чтобы сервер успел обработать
-                    await asyncio.sleep(0.3)
+            text_msg = {"type": "listen", "state": "detect", "text": message, "source": "text"}
+            await websocket.send(json.dumps(text_msg))
+            print("📤 Отправлен detect")
 
             full_reply = ""
             while True:
@@ -141,12 +163,6 @@ async def send_to_xiaozhi(message: str) -> str:
                             full_reply += data["text"]
                     elif data.get("state") in ("end", "stop"):
                         break
-                elif msg_type == "text":
-                    # Возможный ответ в виде text
-                    if "text" in data and data["text"].strip():
-                        full_reply += data["text"]
-                    if data.get("state") in ("end", "stop"):
-                        break
                 elif msg_type == "error":
                     return f"Ошибка от Xiaozhi: {data.get('message', 'неизвестная')}"
                 elif msg_type == "alert":
@@ -173,6 +189,7 @@ async def mcp_handler(request: Request):
         method = body.get("method")
         session_id = request.headers.get("mcp-session-id")
 
+        # Обработка initialize
         if method == "initialize":
             new_session_id = str(uuid.uuid4()).replace("-", "")
             sessions[new_session_id] = {"active": True}
@@ -181,7 +198,7 @@ async def mcp_handler(request: Request):
                 "id": body.get("id"),
                 "result": {
                     "protocolVersion": "2024-11-05",
-                    "capabilities": {},
+                    "capabilities": {"tools": {}},
                     "serverInfo": {"name": "Xiaozhi Adapter", "version": "1.0.0"}
                 }
             }
@@ -189,6 +206,12 @@ async def mcp_handler(request: Request):
             response.headers["mcp-session-id"] = new_session_id
             return response
 
+        # Обработка уведомления об инициализации (обязательно для MCP)
+        if method == "notifications/initialized":
+            # Просто возвращаем 200 OK, без тела
+            return Response(status_code=200)
+
+        # Проверка сессии для остальных методов
         if not session_id or session_id not in sessions:
             return JSONResponse({
                 "jsonrpc": "2.0",
@@ -196,10 +219,12 @@ async def mcp_handler(request: Request):
                 "error": {"code": -32000, "message": "Bad Request: No valid session ID provided"}
             }, status_code=400)
 
+        # Обработка вызова инструментов
         if method == "tools/call":
             params = body.get("params", {})
             tool_name = params.get("name")
             arguments = params.get("arguments", {})
+
             if tool_name == "send_message":
                 message = arguments.get("message", "")
                 result_text = await send_to_xiaozhi(message)
@@ -213,18 +238,38 @@ async def mcp_handler(request: Request):
                 }
                 sse_body = f"event: message\ndata: {json.dumps(sse_data)}\n\n"
                 return Response(content=sse_body, media_type="text/event-stream")
+
+            elif tool_name == "process_text":
+                text = arguments.get("text", "")
+                if not text:
+                    result_text = "Ошибка: текст не передан."
+                else:
+                    result_text = await call_external_api(text)
+                sse_data = {
+                    "jsonrpc": "2.0",
+                    "id": body.get("id"),
+                    "result": {
+                        "content": [{"type": "text", "text": result_text}],
+                        "structuredContent": {"result": result_text}
+                    }
+                }
+                sse_body = f"event: message\ndata: {json.dumps(sse_data)}\n\n"
+                return Response(content=sse_body, media_type="text/event-stream")
+
             else:
                 return JSONResponse({
                     "jsonrpc": "2.0",
                     "id": body.get("id"),
                     "error": {"code": -32602, "message": f"Unknown tool: {tool_name}"}
                 }, status_code=400)
-        else:
-            return JSONResponse({
-                "jsonrpc": "2.0",
-                "id": body.get("id"),
-                "error": {"code": -32601, "message": f"Method not found: {method}"}
-            }, status_code=400)
+
+        # Неизвестный метод
+        return JSONResponse({
+            "jsonrpc": "2.0",
+            "id": body.get("id"),
+            "error": {"code": -32601, "message": f"Method not found: {method}"}
+        }, status_code=400)
+
     except Exception as e:
         print(f"❌ Ошибка в mcp_handler: {e}")
         return JSONResponse({
