@@ -25,7 +25,7 @@ POLZA_API_KEY = os.getenv("POLZA_API_KEY") # Ваш ключ от Polza.ai / Dee
 
 # Используем легкую модель (весит ~80 МБ, идеально для Render 512MB)
 # Поддерживает русский и английский языки
-embedding_model = TextEmbedding(model_name="intfloat/multilingual-e5-small") 
+embedding_ = TextEmbedding(model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2") 
 
 COLLECTION_NAME = "xiaozhi_knowledge"
 
