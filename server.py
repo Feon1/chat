@@ -54,10 +54,11 @@ if POLZA_API_KEY:
 
 async def call_mcp_search_knowledge(query: str) -> str:
     """
-    Подключается к MCP-эндпоинту Xiaozhi, инициализирует сессию,
+    Подключается к MCP-эндпоинту Xiaozhi, выполняет инициализацию,
     вызывает search_knowledge и возвращает контекст.
     """
     if not XIAOZHI_MCP_TOKEN:
+        print("⚠️ XIAOZHI_MCP_TOKEN отсутствует")
         return ""
 
     ws_url = f"{XIAOZHI_MCP_URL}?token={XIAOZHI_MCP_TOKEN}"
@@ -67,59 +68,58 @@ async def call_mcp_search_knowledge(query: str) -> str:
         async with websockets.connect(ws_url) as websocket:
             print("✅ WebSocket подключен к Xiaozhi MCP")
 
-            # 1. Отправляем hello
-            hello_msg = {
-                "type": "hello",
-                "version": 1,
-                "transport": "websocket",
-                "audio_params": {
-                    "format": "opus",
-                    "sample_rate": 16000,
-                    "channels": 1,
-                    "frame_duration": 60
-                }
+            # Шаг 1: Отправить initialize
+            init_msg = {
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "Xiaozhi Adapter", "version": "1.0.0"}
+                },
+                "id": 1
             }
-            await websocket.send(json.dumps(hello_msg))
-            print("📤 Hello отправлен")
+            await websocket.send(json.dumps(init_msg))
+            print("📤 Отправлен initialize")
 
-            # 2. Ждём ответ hello (получаем session_id)
+            # Ждём ответ на initialize
             try:
                 resp = await asyncio.wait_for(websocket.recv(), timeout=10.0)
                 data = json.loads(resp)
-                print(f"📩 Получен ответ на hello: {data}")
-                if data.get("type") != "hello":
-                    print(f"⚠️ Неверный ответ на hello: {data.get('type')}")
-                    # Если это не hello, возможно, это уже результат? пробуем обработать
-                    if data.get("type") == "mcp_result":
-                        # это может быть результат предыдущего вызова, но такого не должно быть
-                        pass
+                print(f"📩 Получен ответ на initialize: {data.get('id')}")
+                if data.get("id") != 1:
+                    print("⚠️ Неверный ID в ответе на initialize")
                     return ""
-                session_id = data.get("session_id")
-                if not session_id:
-                    print("⚠️ Нет session_id")
-                    return ""
-                print(f"✅ Получен session_id: {session_id}")
             except asyncio.TimeoutError:
-                print("⏰ Таймаут при получении hello")
+                print("⏰ Таймаут при initialize")
                 return ""
             except Exception as e:
-                print(f"⚠️ Ошибка при получении hello: {e}")
+                print(f"⚠️ Ошибка при initialize: {e}")
                 return ""
 
-            # 3. Вызываем search_knowledge через MCP
+            # Шаг 2: Отправить notifications/initialized
+            notify_msg = {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {}
+            }
+            await websocket.send(json.dumps(notify_msg))
+            print("📤 Отправлен notifications/initialized")
+
+            # Шаг 3: Вызвать search_knowledge
             call_msg = {
-                "type": "mcp",
+                "jsonrpc": "2.0",
                 "method": "tools/call",
                 "params": {
                     "name": "search_knowledge",
                     "arguments": {"query": query}
                 },
-                "id": 1
+                "id": 2
             }
             await websocket.send(json.dumps(call_msg))
             print("📤 Вызов search_knowledge отправлен")
 
-            # 4. Читаем ответы, собираем контекст
+            # Шаг 4: Читаем ответы, собираем контекст
             while True:
                 try:
                     resp = await asyncio.wait_for(websocket.recv(), timeout=30.0)
@@ -128,12 +128,16 @@ async def call_mcp_search_knowledge(query: str) -> str:
                     break
                 try:
                     data = json.loads(resp)
-                    print(f"📩 Получено сообщение: {data.get('type')}")
+                    print(f"📩 Получено сообщение: {data.get('id')}")
                 except json.JSONDecodeError:
                     continue
 
-                msg_type = data.get("type")
-                if msg_type == "mcp_result":
+                # Проверяем, что это ответ на tools/call
+                if data.get("id") == 2:
+                    if "error" in data:
+                        error_msg = data["error"].get("message", "Неизвестная ошибка")
+                        print(f"❌ Ошибка от Xiaozhi: {error_msg}")
+                        return ""
                     result = data.get("result", {})
                     content = result.get("content", [])
                     fragments = []
@@ -146,11 +150,8 @@ async def call_mcp_search_knowledge(query: str) -> str:
                         return context
                     else:
                         return ""
-                elif msg_type == "error":
-                    print(f"❌ Ошибка от Xiaozhi: {data.get('message')}")
-                    return ""
                 else:
-                    # Игнорируем другие типы (stt, tts, etc.)
+                    # Игнорируем другие сообщения (например, уведомления)
                     continue
             return ""
     except Exception as e:
@@ -187,7 +188,7 @@ async def call_polza_with_context(prompt: str, context: str) -> str:
     except Exception as e:
         return f"⚠️ Ошибка при вызове Polza.ai: {e}"
 
-# --- Основная функция ---
+# --- Основная функция обработки запросов ---
 
 async def send_to_xiaozhi(message: str) -> str:
     print(f"📨 send_to_xiaozhi called with: {message}")
