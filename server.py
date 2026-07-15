@@ -126,7 +126,8 @@ async def search_knowledge(query: str) -> str:
         search_result = qdrant.search(
             collection_name=COLLECTION_NAME,
             query_vector=query_vector,
-            limit=3
+            limit=3,
+            with_payload=True  # Явно указываем, что нам нужен текст (payload)
         )
         
         if not search_result:
@@ -135,6 +136,9 @@ async def search_knowledge(query: str) -> str:
         fragments = [hit.payload.get("text", "") for hit in search_result if hit.payload]
         return "\n\n".join(fragments)
         
+    except AttributeError as e:
+        print(f"⚠️ Ошибка версии Qdrant (AttributeError): {e}")
+        return ""
     except Exception as e:
         print(f"⚠️ Ошибка поиска в Qdrant: {e}")
         return ""
