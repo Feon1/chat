@@ -3,13 +3,16 @@ import json
 import os
 import uuid
 import websockets
-import aiohttp
 from openai import AsyncOpenAI
 from fastapi import FastAPI, Request
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, Response
 import uvicorn
 from dotenv import load_dotenv
+
+# MCP клиент для работы через SSE
+from mcp import ClientSession
+from mcp.client.sse import sse_client
 
 load_dotenv()
 
@@ -39,8 +42,8 @@ CLIENT_ID = os.getenv("CLIENT_ID", "9cc3e5e4-adcf-4eff-8d23-95d4eaa21020")
 print(f"📱 Device ID: {DEVICE_ID}")
 print(f"📱 Client ID: {CLIENT_ID}")
 
-# --- Настройки MCP Hub ---
-MCP_HUB_URL = os.getenv("MCP_HUB_URL", "https://xiaozhi-mcphub-deploy-server.onrender.com/mcp")
+# --- Настройки MCP Hub (SSE) ---
+MCP_HUB_URL = os.getenv("MCP_HUB_URL", "https://xiaozhi-mcphub-deploy-server.onrender.com")
 MCP_HUB_TOKEN = os.getenv("MCP_HUB_TOKEN", "")
 if not MCP_HUB_TOKEN:
     print("⚠️  MCP_HUB_TOKEN не задан! Поиск по базе знаний будет недоступен.")
@@ -61,86 +64,39 @@ polza_client = AsyncOpenAI(
 # --- Вспомогательные функции ---
 
 async def call_mcp_search_knowledge(query: str) -> str:
-    """Вызывает search_knowledge через MCP Hub, предварительно создав сессию."""
+    """Вызывает search_knowledge через SSE-подключение к MCP Hub."""
     if not MCP_HUB_TOKEN:
         print("⚠️ MCP_HUB_TOKEN отсутствует, пропускаем поиск")
         return ""
 
-    # Общие заголовки для всех запросов к MCP Hub
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",   # <-- исправление 406
-        "Authorization": f"Bearer {MCP_HUB_TOKEN}"
-    }
+    # Формируем URL для SSE с токеном в параметрах
+    sse_url = f"{MCP_HUB_URL}/sse?token={MCP_HUB_TOKEN}"
+    print(f"🔗 Подключение к SSE: {sse_url[:80]}...")
 
-    # Шаг 1: Инициализация сессии
-    init_payload = {
-        "jsonrpc": "2.0",
-        "method": "initialize",
-        "params": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "Xiaozhi Adapter", "version": "1.0.0"}
-        },
-        "id": str(uuid.uuid4())
-    }
-    session_id = None
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(MCP_HUB_URL, headers=headers, json=init_payload) as resp:
-                if resp.status == 200:
-                    # Получаем session_id из заголовка ответа
-                    session_id = resp.headers.get("mcp-session-id")
-                    if not session_id:
-                        # Если в заголовке нет, пробуем из тела
-                        data = await resp.json()
-                        session_id = data.get("result", {}).get("session_id")
-                    if not session_id:
-                        print("⚠️ Не удалось получить session_id от MCP Hub")
-                        return ""
-                else:
-                    error_text = await resp.text()
-                    print(f"⚠️ Ошибка инициализации MCP Hub: {resp.status} - {error_text}")
-                    return ""
-    except Exception as e:
-        print(f"⚠️ Ошибка инициализации MCP Hub: {e}")
-        return ""
+        async with sse_client(sse_url) as (read_stream, write_stream):
+            async with ClientSession(read_stream, write_stream) as session:
+                # Инициализация
+                await session.initialize()
+                print("✅ MCP сессия инициализирована")
 
-    if not session_id:
-        return ""
+                # Вызов инструмента search_knowledge
+                result = await session.call_tool("search_knowledge", arguments={"query": query})
+                print(f"📩 Получен ответ от search_knowledge: {result}")
 
-    # Шаг 2: Вызов tools/call с полученным session_id
-    headers["mcp-session-id"] = session_id
-    payload = {
-        "jsonrpc": "2.0",
-        "method": "tools/call",
-        "params": {
-            "name": "search_knowledge",
-            "arguments": {"query": query}
-        },
-        "id": str(uuid.uuid4())
-    }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(MCP_HUB_URL, headers=headers, json=payload) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    result = data.get("result", {})
-                    content = result.get("content", [])
-                    if content and isinstance(content, list):
-                        fragments = [item.get("text", "") for item in content if item.get("text")]
-                        if fragments:
-                            return "\n\n".join(fragments)
-                    structured = result.get("structuredContent", {})
-                    if "result" in structured:
-                        return structured["result"]
-                    return ""
-                else:
-                    error_text = await resp.text()
-                    print(f"⚠️ MCP Hub error: {resp.status} - {error_text}")
-                    return ""
+                # Извлечение текста из результата
+                if result.content:
+                    fragments = []
+                    for item in result.content:
+                        if hasattr(item, 'text') and item.text:
+                            fragments.append(item.text)
+                        elif isinstance(item, dict) and 'text' in item:
+                            fragments.append(item['text'])
+                    if fragments:
+                        return "\n\n".join(fragments)
+                return ""
     except Exception as e:
-        print(f"⚠️ Ошибка вызова search_knowledge: {e}")
+        print(f"⚠️ Ошибка вызова search_knowledge через SSE: {e}")
         return ""
 
 async def call_polza_with_context(prompt: str, context: str) -> str:
@@ -179,8 +135,8 @@ async def call_polza_with_context(prompt: str, context: str) -> str:
 async def send_to_xiaozhi(message: str) -> str:
     print(f"📨 send_to_xiaozhi called with: {message}")
 
-    if len(message) > 1:
-        print("🔍 Выполняем поиск в базе знаний через MCP Hub...")
+    if len(message) > 50:
+        print("🔍 Выполняем поиск в базе знаний через MCP Hub (SSE)...")
         context = await call_mcp_search_knowledge(message)
         if context:
             print(f"📚 Найден контекст: {context[:200]}...")
