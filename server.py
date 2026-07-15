@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse, Response
 import uvicorn
 from dotenv import load_dotenv
 
-# MCP клиент для работы через SSE
+# Импортируем MCP клиент для SSE
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 
@@ -64,27 +64,33 @@ polza_client = AsyncOpenAI(
 # --- Вспомогательные функции ---
 
 async def call_mcp_search_knowledge(query: str) -> str:
-    """Вызывает search_knowledge через SSE-подключение к MCP Hub."""
+    """
+    Вызывает search_knowledge через SSE-подключение к MCP Hub.
+    Возвращает объединённый контекст или пустую строку в случае ошибки.
+    """
     if not MCP_HUB_TOKEN:
         print("⚠️ MCP_HUB_TOKEN отсутствует, пропускаем поиск")
         return ""
 
-    # Формируем URL для SSE с токеном в параметрах
-    sse_url = f"{MCP_HUB_URL}/sse?token={MCP_HUB_TOKEN}"
-    print(f"🔗 Подключение к SSE: {sse_url[:80]}...")
+    sse_url = f"{MCP_HUB_URL}/sse"
+    headers = {
+        "Authorization": f"Bearer {MCP_HUB_TOKEN}",
+        "Accept": "application/json, text/event-stream"
+    }
+    print(f"🔗 Подключение к SSE: {sse_url} (с заголовками)")
 
     try:
-        async with sse_client(sse_url) as (read_stream, write_stream):
+        async with sse_client(sse_url, headers=headers) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
-                # Инициализация
+                # Инициализация MCP сессии
                 await session.initialize()
                 print("✅ MCP сессия инициализирована")
 
                 # Вызов инструмента search_knowledge
                 result = await session.call_tool("search_knowledge", arguments={"query": query})
-                print(f"📩 Получен ответ от search_knowledge: {result}")
+                print(f"📩 Получен ответ от search_knowledge")
 
-                # Извлечение текста из результата
+                # Извлекаем текстовые фрагменты из ответа
                 if result.content:
                     fragments = []
                     for item in result.content:
@@ -93,10 +99,15 @@ async def call_mcp_search_knowledge(query: str) -> str:
                         elif isinstance(item, dict) and 'text' in item:
                             fragments.append(item['text'])
                     if fragments:
-                        return "\n\n".join(fragments)
+                        context = "\n\n".join(fragments)
+                        print(f"📚 Найден контекст: {context[:200]}...")
+                        return context
                 return ""
     except Exception as e:
         print(f"⚠️ Ошибка вызова search_knowledge через SSE: {e}")
+        # Дополнительная диагностика
+        import traceback
+        traceback.print_exc()
         return ""
 
 async def call_polza_with_context(prompt: str, context: str) -> str:
@@ -135,6 +146,7 @@ async def call_polza_with_context(prompt: str, context: str) -> str:
 async def send_to_xiaozhi(message: str) -> str:
     print(f"📨 send_to_xiaozhi called with: {message}")
 
+    # Длинные запросы (>50 символов) – RAG + Polza.ai (только Chutes)
     if len(message) > 50:
         print("🔍 Выполняем поиск в базе знаний через MCP Hub (SSE)...")
         context = await call_mcp_search_knowledge(message)
@@ -144,7 +156,7 @@ async def send_to_xiaozhi(message: str) -> str:
             print("⚠️ Контекст не найден.")
         return await call_polza_with_context(message, context)
 
-    # --- Короткие запросы (≤50 символов) — через WebSocket Xiaozhi ---
+    # Короткие запросы (≤50 символов) – через WebSocket Xiaozhi
     headers = {
         "Device-Id": DEVICE_ID,
         "Client-Id": CLIENT_ID,
@@ -237,7 +249,7 @@ async def send_to_xiaozhi(message: str) -> str:
         print(f"❌ Ошибка подключения к Xiaozhi: {e}")
         return f"❌ Ошибка подключения к Xiaozhi: {e}"
 
-# --- MCP-обработчик ---
+# --- MCP-обработчик (для внешних клиентов) ---
 
 @app.options("/mcp")
 async def options_mcp():
