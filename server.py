@@ -7,11 +7,20 @@ from dotenv import load_dotenv
 import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+from fastapi.middleware.cors import CORSMiddleware
 
 # Загрузка переменных окружения
 load_dotenv()
 
 app = FastAPI(title="XiaoZhi RAG Adapter (Jina)")
+# Разрешаем запросы с вашего GitHub Pages и любых других источников
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # В продакшене лучше указать ["https://feon1.github.io"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ==========================================
 # НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
