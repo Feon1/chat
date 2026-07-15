@@ -3,7 +3,6 @@ import json
 import os
 import uuid
 import aiohttp
-from openai import AsyncOpenAI
 from fastapi import FastAPI, Request
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, Response
@@ -46,21 +45,17 @@ else:
 polza_client = None
 if POLZA_API_KEY:
     try:
+        from openai import AsyncOpenAI
         polza_client = AsyncOpenAI(api_key=POLZA_API_KEY, base_url=POLZA_BASE_URL)
         print("✅ Клиент Polza.ai создан")
     except Exception as e:
         print(f"⚠️ Ошибка создания клиента Polza.ai: {e}")
 
-# --- Функция вызова MCP Hub с созданием сессии ---
+# --- Функция вызова MCP Hub с обработкой SSE ---
 
 async def call_mcp_hub(tool_name: str, arguments: dict) -> str:
-    """
-    Вызывает инструмент через MCP Hub.
-    Сначала создаёт сессию (initialize), получает session_id,
-    затем вызывает tools/call с этим session_id.
-    """
     if not MCP_HUB_TOKEN:
-        return "⚠️ MCP_HUB_TOKEN не задан!"
+        return ""
 
     headers_base = {
         "Content-Type": "application/json",
@@ -68,7 +63,7 @@ async def call_mcp_hub(tool_name: str, arguments: dict) -> str:
         "Accept": "application/json, text/event-stream"
     }
 
-    # Шаг 1: Инициализация сессии
+    # 1. Initialize session
     init_payload = {
         "jsonrpc": "2.0",
         "method": "initialize",
@@ -86,19 +81,22 @@ async def call_mcp_hub(tool_name: str, arguments: dict) -> str:
                 if resp.status == 200:
                     session_id = resp.headers.get("mcp-session-id")
                     if not session_id:
-                        # пробуем из тела ответа
+                        # try from body
                         data = await resp.json()
                         session_id = data.get("result", {}).get("session_id")
                     if not session_id:
-                        return "⚠️ Не удалось получить session_id от MCP Hub"
+                        print("⚠️ Не удалось получить session_id")
+                        return ""
                     print(f"✅ Получен session_id: {session_id}")
                 else:
                     error_text = await resp.text()
-                    return f"⚠️ Ошибка инициализации MCP Hub: {resp.status} - {error_text}"
+                    print(f"⚠️ Ошибка инициализации: {resp.status} - {error_text}")
+                    return ""
     except Exception as e:
-        return f"⚠️ Ошибка подключения к MCP Hub при инициализации: {e}"
+        print(f"⚠️ Ошибка инициализации: {e}")
+        return ""
 
-    # Шаг 2: Вызов инструмента с session_id
+    # 2. Call tool
     headers = headers_base.copy()
     headers["mcp-session-id"] = session_id
     call_payload = {
@@ -113,7 +111,40 @@ async def call_mcp_hub(tool_name: str, arguments: dict) -> str:
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(MCP_HUB_URL, headers=headers, json=call_payload) as resp:
-                if resp.status == 200:
+                content_type = resp.headers.get("Content-Type", "")
+                if "text/event-stream" in content_type:
+                    # Read SSE stream
+                    full_text = ""
+                    async for line in resp.content:
+                        line = line.decode('utf-8').strip()
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                data = json.loads(data_str)
+                                # Extract text from various possible structures
+                                if "result" in data:
+                                    result = data["result"]
+                                    content = result.get("content", [])
+                                    for item in content:
+                                        if isinstance(item, dict) and "text" in item:
+                                            full_text += item["text"]
+                                elif "choices" in data:
+                                    for choice in data.get("choices", []):
+                                        delta = choice.get("delta", {})
+                                        if "content" in delta:
+                                            full_text += delta["content"]
+                                elif "text" in data:
+                                    full_text += data["text"]
+                            except json.JSONDecodeError:
+                                continue
+                    if full_text:
+                        return full_text
+                    else:
+                        return ""
+                else:
+                    # Regular JSON
                     data = await resp.json()
                     result = data.get("result", {})
                     content = result.get("content", [])
@@ -121,18 +152,15 @@ async def call_mcp_hub(tool_name: str, arguments: dict) -> str:
                         fragments = [item.get("text", "") for item in content if item.get("text")]
                         if fragments:
                             return "\n\n".join(fragments)
-                    # Альтернативная структура
                     structured = result.get("structuredContent", {})
                     if "result" in structured:
                         return structured["result"]
                     return ""
-                else:
-                    error_text = await resp.text()
-                    return f"⚠️ Ошибка вызова инструмента: {resp.status} - {error_text}"
     except Exception as e:
-        return f"⚠️ Ошибка вызова MCP Hub: {e}"
+        print(f"⚠️ Ошибка вызова MCP Hub: {e}")
+        return ""
 
-# --- Основные функции ---
+# --- Функция для Polza.ai ---
 
 async def call_polza_with_context(prompt: str, context: str) -> str:
     if not POLZA_API_KEY:
@@ -161,17 +189,23 @@ async def call_polza_with_context(prompt: str, context: str) -> str:
     except Exception as e:
         return f"⚠️ Ошибка при вызове Polza.ai: {e}"
 
+# --- Основная функция обработки запросов ---
+
 async def send_to_xiaozhi(message: str) -> str:
     print(f"📨 send_to_xiaozhi called with: {message}")
 
     if MCP_HUB_TOKEN:
         print("🔍 Выполняем поиск в базе знаний через MCP Hub...")
         context = await call_mcp_hub("search_knowledge", {"query": message})
-        if context:
+        if context and not context.startswith("⚠️") and not context.startswith("❌"):
             print(f"📚 Найден контекст: {context[:200]}...")
             return await call_polza_with_context(message, context)
         else:
-            return "❌ Не удалось найти информацию в базе знаний. Пожалуйста, переформулируйте запрос."
+            # Если контекст пустой или содержит ошибку, не вызываем Polza.ai
+            if not context:
+                return "❌ Не удалось найти информацию в базе знаний. Пожалуйста, переформулируйте запрос."
+            else:
+                return context  # Возвращаем сообщение об ошибке от MCP Hub
     else:
         return "⚠️ MCP_HUB_TOKEN не задан! Поиск в базе знаний недоступен."
 
