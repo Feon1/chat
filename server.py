@@ -10,10 +10,6 @@ from starlette.responses import JSONResponse, Response
 import uvicorn
 from dotenv import load_dotenv
 
-# Используем MCP клиент для WebSocket
-from mcp import ClientSession
-from mcp.client.websocket import websocket_client
-
 load_dotenv()
 
 app = FastAPI()
@@ -29,7 +25,7 @@ app.add_middleware(
 
 sessions = {}
 
-# --- Настройки Xiaozhi ---
+# --- Настройки Xiaozhi (голосовой режим) ---
 XIAOZHI_WS_URL = os.getenv("XIAOZHI_WS_URL", "wss://api.tenclass.net/xiaozhi/v1/")
 XIAOZHI_TOKEN = os.getenv("XIAOZHI_TOKEN", "")
 if not XIAOZHI_TOKEN:
@@ -47,26 +43,33 @@ XIAOZHI_MCP_URL = os.getenv("XIAOZHI_MCP_URL", "wss://api.xiaozhi.me/mcp/")
 XIAOZHI_MCP_TOKEN = os.getenv("XIAOZHI_MCP_TOKEN", "")
 if not XIAOZHI_MCP_TOKEN:
     print("⚠️  XIAOZHI_MCP_TOKEN не задан! Поиск по базе знаний будет недоступен.")
+else:
+    print("✅ XIAOZHI_MCP_TOKEN загружен")
 
 # --- Настройки Polza.ai ---
 POLZA_API_KEY = os.getenv("POLZA_API_KEY", "")
 POLZA_BASE_URL = "https://polza.ai/api/v1"
-POLZA_MODEL = "deepseek/deepseek-v4-flash"  # Используем новую модель
+POLZA_MODEL = "deepseek/deepseek-v4-flash"
 
 if not POLZA_API_KEY:
     print("⚠️  POLZA_API_KEY не задан! Длинные запросы не будут обрабатываться.")
+else:
+    print("✅ POLZA_API_KEY загружен")
 
-polza_client = AsyncOpenAI(
-    api_key=POLZA_API_KEY,
-    base_url=POLZA_BASE_URL,
-)
+polza_client = None
+if POLZA_API_KEY:
+    polza_client = AsyncOpenAI(
+        api_key=POLZA_API_KEY,
+        base_url=POLZA_BASE_URL,
+    )
 
 # --- Вспомогательные функции ---
 
-async def call_mcp_search_knowledge_direct(query: str) -> str:
+async def call_mcp_search_knowledge(query: str) -> str:
     """
     Подключается напрямую к MCP-эндпоинту Xiaozhi через WebSocket,
-    вызывает search_knowledge и возвращает контекст.
+    вызывает search_knowledge и возвращает объединённый контекст.
+    Если контекст не найден или произошла ошибка, возвращает пустую строку.
     """
     if not XIAOZHI_MCP_TOKEN:
         print("⚠️ XIAOZHI_MCP_TOKEN отсутствует, пропускаем поиск")
@@ -76,39 +79,102 @@ async def call_mcp_search_knowledge_direct(query: str) -> str:
     print(f"🔗 Подключение к Xiaozhi MCP WebSocket: {ws_url[:80]}...")
 
     try:
-        async with websocket_client(ws_url) as (read_stream, write_stream):
-            async with ClientSession(read_stream, write_stream) as session:
-                # Инициализация MCP сессии
-                await session.initialize()
-                print("✅ MCP сессия с Xiaozhi инициализирована")
+        async with websockets.connect(ws_url) as websocket:
+            print("✅ WebSocket подключен к Xiaozhi MCP")
 
-                # Вызов инструмента search_knowledge
-                result = await session.call_tool("search_knowledge", arguments={"query": query})
-                print(f"📩 Получен ответ от search_knowledge")
+            # 1. Отправляем hello
+            hello_msg = {
+                "type": "hello",
+                "version": 1,
+                "transport": "websocket",
+                "audio_params": {
+                    "format": "opus",
+                    "sample_rate": 16000,
+                    "channels": 1,
+                    "frame_duration": 60
+                }
+            }
+            await websocket.send(json.dumps(hello_msg))
+            print("📤 Hello отправлен")
 
-                # Извлекаем текстовые фрагменты из ответа
-                if result.content:
+            # Ждём ответ hello
+            try:
+                resp = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+                data = json.loads(resp)
+                if data.get("type") != "hello":
+                    print("Неверный ответ на hello")
+                    return ""
+                session_id = data.get("session_id")
+                if not session_id:
+                    print("Нет session_id")
+                    return ""
+                print(f"✅ Получен session_id: {session_id}")
+            except asyncio.TimeoutError:
+                print("⏰ Таймаут при получении hello")
+                return ""
+            except Exception as e:
+                print(f"Ошибка при получении hello: {e}")
+                return ""
+
+            # 2. Вызываем search_knowledge
+            call_msg = {
+                "type": "mcp",
+                "method": "tools/call",
+                "params": {
+                    "name": "search_knowledge",
+                    "arguments": {"query": query}
+                },
+                "id": 1
+            }
+            await websocket.send(json.dumps(call_msg))
+            print("📤 Вызов search_knowledge отправлен")
+
+            # 3. Читаем ответы, собираем результат
+            while True:
+                try:
+                    resp = await asyncio.wait_for(websocket.recv(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    print("⏰ Таймаут ожидания ответа от search_knowledge")
+                    break
+                try:
+                    data = json.loads(resp)
+                except json.JSONDecodeError:
+                    continue
+
+                msg_type = data.get("type")
+                if msg_type == "mcp_result":
+                    result = data.get("result", {})
+                    content = result.get("content", [])
                     fragments = []
-                    for item in result.content:
-                        if hasattr(item, 'text') and item.text:
-                            fragments.append(item.text)
-                        elif isinstance(item, dict) and 'text' in item:
-                            fragments.append(item['text'])
+                    for item in content:
+                        if isinstance(item, dict) and "text" in item:
+                            fragments.append(item["text"])
                     if fragments:
                         context = "\n\n".join(fragments)
                         print(f"📚 Найден контекст: {context[:200]}...")
                         return context
-                return ""
+                    else:
+                        return ""
+                elif msg_type == "error":
+                    print(f"❌ Ошибка от Xiaozhi: {data.get('message')}")
+                    return ""
+                else:
+                    # Игнорируем другие типы сообщений
+                    continue
+            return ""
     except Exception as e:
-        print(f"⚠️ Ошибка вызова search_knowledge напрямую: {e}")
+        print(f"⚠️ Ошибка вызова search_knowledge: {e}")
         import traceback
         traceback.print_exc()
         return ""
 
 async def call_polza_with_context(prompt: str, context: str) -> str:
-    """Вызов Polza.ai с контекстом, без принудительного провайдера (автовыбор)."""
+    """Вызов Polza.ai с контекстом, без принудительного провайдера."""
     if not POLZA_API_KEY:
         return "⚠️ Polza.ai не настроен. Установите POLZA_API_KEY."
+
+    if not polza_client:
+        return "⚠️ Клиент Polza.ai недоступен (библиотека openai не установлена)."
 
     if not context or not context.strip():
         return "❌ Не удалось найти информацию в базе знаний. Пожалуйста, переформулируйте запрос."
@@ -125,26 +191,31 @@ async def call_polza_with_context(prompt: str, context: str) -> str:
             ],
             temperature=0.6,
             max_tokens=2000,
-            # Без extra_body — Polza сама выберет провайдера
         )
         return response.choices[0].message.content or "Ответ не получен"
     except Exception as e:
         return f"⚠️ Ошибка при вызове Polza.ai: {e}"
 
+# --- Основная функция отправки запроса ---
+
 async def send_to_xiaozhi(message: str) -> str:
     print(f"📨 send_to_xiaozhi called with: {message}")
 
-    # Длинные запросы (>50 символов) – RAG + Polza.ai
+    # Длинные запросы – RAG (поиск в базе знаний) + Polza.ai
     if len(message) > 50:
-        print("🔍 Выполняем поиск в базе знаний напрямую через Xiaozhi MCP...")
-        context = await call_mcp_search_knowledge_direct(message)
-        if context:
-            print(f"📚 Найден контекст: {context[:200]}...")
-        else:
-            print("⚠️ Контекст не найден.")
+        if not XIAOZHI_MCP_TOKEN:
+            return "⚠️ XIAOZHI_MCP_TOKEN не задан! Поиск в базе знаний недоступен."
+
+        print("🔍 Выполняем поиск в базе знаний через Xiaozhi MCP...")
+        context = await call_mcp_search_knowledge(message)
+
+        if not context:
+            return "❌ Не удалось найти информацию в базе знаний. Пожалуйста, переформулируйте запрос."
+
+        # Контекст найден – отправляем в Polza.ai
         return await call_polza_with_context(message, context)
 
-    # Короткие запросы (≤50 символов) – через WebSocket Xiaozhi (голосовой режим)
+    # Короткие запросы (≤50 символов) – через обычный WebSocket (голосовой режим)
     headers = {
         "Device-Id": DEVICE_ID,
         "Client-Id": CLIENT_ID,
@@ -237,7 +308,7 @@ async def send_to_xiaozhi(message: str) -> str:
         print(f"❌ Ошибка подключения к Xiaozhi: {e}")
         return f"❌ Ошибка подключения к Xiaozhi: {e}"
 
-# --- MCP-обработчик (для внешних клиентов) ---
+# --- MCP-обработчик для внешних клиентов ---
 
 @app.options("/mcp")
 async def options_mcp():
@@ -253,7 +324,7 @@ async def options_mcp():
 
 @app.get("/")
 async def root():
-    return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter (Direct RAG + Polza.ai)"})
+    return JSONResponse({"status": "ok", "service": "Xiaozhi Adapter (RAG + Polza.ai)"})
 
 @app.post("/mcp")
 async def mcp_handler(request: Request):
@@ -272,7 +343,7 @@ async def mcp_handler(request: Request):
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "Xiaozhi Adapter (Direct RAG)", "version": "1.0.0"}
+                    "serverInfo": {"name": "Xiaozhi Adapter (RAG)", "version": "1.0.0"}
                 }
             }
             response = JSONResponse(response_data)
