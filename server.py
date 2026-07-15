@@ -51,7 +51,7 @@ if not MCP_HUB_TOKEN:
 # --- Настройки Polza.ai (Chutes) ---
 POLZA_API_KEY = os.getenv("POLZA_API_KEY", "")
 POLZA_BASE_URL = "https://polza.ai/api/v1"
-POLZA_MODEL = "deepseek/deepseek-r1-distill-llama-70b"
+POLZA_MODEL = "deepseek/deepseek-v4-flash"
 
 if not POLZA_API_KEY:
     print("⚠️  POLZA_API_KEY не задан! Длинные запросы не будут обрабатываться.")
@@ -130,11 +130,7 @@ async def call_polza_with_context(prompt: str, context: str) -> str:
             ],
             temperature=0.6,
             max_tokens=2000,
-            extra_body={
-                "provider": {
-                    "only": ["Chutes"]
-                }
-            }
+            
         )
         return response.choices[0].message.content or "Ответ не получен"
     except Exception as e:
