@@ -51,89 +51,79 @@ try:
         print("⚠️ POLZA_API_KEY не задан! Длинные запросы не будут обрабатываться.")
 
     async def call_mcp_search_knowledge(query: str) -> str:
-        if not XIAOZHI_MCP_TOKEN:
-            return ""
-        ws_url = f"{XIAOZHI_MCP_URL}?token={XIAOZHI_MCP_TOKEN}"
-        print(f"🔗 Подключение: {ws_url[:80]}...")
-        try:
-            async with websockets.connect(ws_url) as websocket:
-                print("✅ WebSocket подключен")
-                # Отправляем hello для получения session_id
-                hello_msg = {
-                    "type": "hello",
-                    "version": 1,
-                    "transport": "websocket",
-                    "audio_params": {
-                        "format": "opus",
-                        "sample_rate": 16000,
-                        "channels": 1,
-                        "frame_duration": 60
-                    }
-                }
-                await websocket.send(json.dumps(hello_msg))
+    if not XIAOZHI_MCP_TOKEN:
+        return ""
+    ws_url = f"{XIAOZHI_MCP_URL}?token={XIAOZHI_MCP_TOKEN}"
+    print(f"🔗 Подключение: {ws_url[:80]}...")
+    try:
+        async with websockets.connect(ws_url) as websocket:
+            print("✅ WebSocket подключен")
+            # Отправляем initialize напрямую (без hello)
+            init_payload = {
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "Adapter", "version": "1.0"}
+                },
+                "id": 1
+            }
+            await websocket.send(json.dumps(init_payload))
+            print("📤 Отправлен initialize (id=1)")
+
+            # Ждём ответ на initialize
+            try:
                 resp = await asyncio.wait_for(websocket.recv(), timeout=10.0)
+                print(f"📩 Ответ на initialize: {resp[:500]}")
                 data = json.loads(resp)
-                session_id = data.get("session_id")
-                if not session_id:
-                    print("❌ Не получен session_id")
+                if "error" in data:
+                    print(f"⚠️ Ошибка initialize: {data['error']}")
                     return ""
-                print(f"✅ session_id: {session_id}")
+            except Exception as e:
+                print(f"⚠️ Ошибка получения ответа на initialize: {e}")
+                return ""
 
-                # Инициализация MCP
-                init_payload = {
-                    "jsonrpc": "2.0",
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": {"name": "Adapter", "version": "1.0"}
-                    },
-                    "id": 1
-                }
-                await websocket.send(json.dumps({
-                    "session_id": session_id,
-                    "type": "mcp",
-                    "payload": init_payload
-                }))
-                await asyncio.wait_for(websocket.recv(), timeout=10.0)
+            # Отправляем уведомление о завершении инициализации
+            notify = {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}
+            await websocket.send(json.dumps(notify))
+            print("📤 Отправлен notifications/initialized")
 
-                # Вызов search_knowledge
-                call_payload = {
-                    "jsonrpc": "2.0",
-                    "method": "tools/call",
-                    "params": {
-                        "name": "search_knowledge",
-                        "arguments": {"query": query}
-                    },
-                    "id": 2
-                }
-                await websocket.send(json.dumps({
-                    "session_id": session_id,
-                    "type": "mcp",
-                    "payload": call_payload
-                }))
-                print("📤 search_knowledge отправлен")
+            # Вызываем search_knowledge
+            call_payload = {
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {
+                    "name": "search_knowledge",
+                    "arguments": {"query": query}
+                },
+                "id": 2
+            }
+            await websocket.send(json.dumps(call_payload))
+            print("📤 Вызов search_knowledge отправлен (id=2)")
 
-                # Чтение ответа
-                while True:
+            # Читаем ответ, ожидаем id=2
+            while True:
+                try:
                     resp = await asyncio.wait_for(websocket.recv(), timeout=30.0)
+                    print(f"📩 Получено: {resp[:500]}")
                     data = json.loads(resp)
-                    if data.get("type") != "mcp":
-                        continue
-                    payload = data.get("payload", {})
-                    if payload.get("id") == 2:
-                        if "error" in payload:
-                            print(f"❌ Ошибка: {payload['error']}")
+                    if data.get("id") == 2:
+                        if "error" in data:
+                            print(f"❌ Ошибка search_knowledge: {data['error']}")
                             return ""
-                        result = payload.get("result", {})
+                        result = data.get("result", {})
                         content = result.get("content", [])
                         fragments = [item.get("text", "") for item in content if isinstance(item, dict) and item.get("text")]
                         if fragments:
                             return "\n\n".join(fragments)
                         return ""
-        except Exception as e:
-            print(f"⚠️ Ошибка MCP: {e}")
-            return ""
+                except asyncio.TimeoutError:
+                    print("⏰ Таймаут ожидания ответа")
+                    break
+    except Exception as e:
+        print(f"⚠️ Ошибка MCP: {e}")
+        return ""
 
     async def call_polza(prompt: str, context: str) -> str:
         if not context or not context.strip():
