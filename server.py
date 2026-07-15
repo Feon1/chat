@@ -29,7 +29,7 @@ sessions = {}
 MCP_HUB_URL = os.getenv("MCP_HUB_URL", "https://xiaozhi-mcphub-deploy-server.onrender.com/mcp")
 MCP_HUB_TOKEN = os.getenv("MCP_HUB_TOKEN", "")
 if not MCP_HUB_TOKEN:
-    print("⚠️ MCP_HUB_TOKEN не задан! Поиск в базе знаний будет недоступен.")
+    print("⚠️ MCP_HUB_TOKEN не задан! Поиск в базе знаний недоступен.")
 else:
     print("✅ MCP_HUB_TOKEN загружен")
 
@@ -51,48 +51,88 @@ if POLZA_API_KEY:
     except Exception as e:
         print(f"⚠️ Ошибка создания клиента Polza.ai: {e}")
 
-# --- Функция вызова search_knowledge через MCP Hub ---
-async def call_mcp_search_knowledge(query: str) -> str:
+# --- Функция вызова MCP Hub с созданием сессии ---
+
+async def call_mcp_hub(tool_name: str, arguments: dict) -> str:
+    """
+    Вызывает инструмент через MCP Hub.
+    Сначала создаёт сессию (initialize), получает session_id,
+    затем вызывает tools/call с этим session_id.
+    """
     if not MCP_HUB_TOKEN:
-        return ""
-    headers = {
+        return "⚠️ MCP_HUB_TOKEN не задан!"
+
+    headers_base = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {MCP_HUB_TOKEN}",
         "Accept": "application/json, text/event-stream"
     }
-    payload = {
+
+    # Шаг 1: Инициализация сессии
+    init_payload = {
+        "jsonrpc": "2.0",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "Xiaozhi Adapter", "version": "1.0.0"}
+        },
+        "id": 1
+    }
+    session_id = None
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(MCP_HUB_URL, headers=headers_base, json=init_payload) as resp:
+                if resp.status == 200:
+                    session_id = resp.headers.get("mcp-session-id")
+                    if not session_id:
+                        # пробуем из тела ответа
+                        data = await resp.json()
+                        session_id = data.get("result", {}).get("session_id")
+                    if not session_id:
+                        return "⚠️ Не удалось получить session_id от MCP Hub"
+                    print(f"✅ Получен session_id: {session_id}")
+                else:
+                    error_text = await resp.text()
+                    return f"⚠️ Ошибка инициализации MCP Hub: {resp.status} - {error_text}"
+    except Exception as e:
+        return f"⚠️ Ошибка подключения к MCP Hub при инициализации: {e}"
+
+    # Шаг 2: Вызов инструмента с session_id
+    headers = headers_base.copy()
+    headers["mcp-session-id"] = session_id
+    call_payload = {
         "jsonrpc": "2.0",
         "method": "tools/call",
         "params": {
-            "name": "search_knowledge",
-            "arguments": {"query": query}
+            "name": tool_name,
+            "arguments": arguments
         },
-        "id": str(uuid.uuid4())
+        "id": 2
     }
-    print(f"📤 Отправка search_knowledge в MCP Hub: {MCP_HUB_URL}")
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(MCP_HUB_URL, headers=headers, json=payload) as resp:
+            async with session.post(MCP_HUB_URL, headers=headers, json=call_payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    print(f"📩 Ответ от MCP Hub: {data}")
                     result = data.get("result", {})
                     content = result.get("content", [])
                     if content and isinstance(content, list):
                         fragments = [item.get("text", "") for item in content if item.get("text")]
                         if fragments:
                             return "\n\n".join(fragments)
+                    # Альтернативная структура
                     structured = result.get("structuredContent", {})
                     if "result" in structured:
                         return structured["result"]
                     return ""
                 else:
                     error_text = await resp.text()
-                    print(f"⚠️ Ошибка MCP Hub: {resp.status} - {error_text}")
-                    return ""
+                    return f"⚠️ Ошибка вызова инструмента: {resp.status} - {error_text}"
     except Exception as e:
-        print(f"⚠️ Ошибка вызова search_knowledge через MCP Hub: {e}")
-        return ""
+        return f"⚠️ Ошибка вызова MCP Hub: {e}"
+
+# --- Основные функции ---
 
 async def call_polza_with_context(prompt: str, context: str) -> str:
     if not POLZA_API_KEY:
@@ -126,16 +166,17 @@ async def send_to_xiaozhi(message: str) -> str:
 
     if MCP_HUB_TOKEN:
         print("🔍 Выполняем поиск в базе знаний через MCP Hub...")
-        context = await call_mcp_search_knowledge(message)
+        context = await call_mcp_hub("search_knowledge", {"query": message})
         if context:
-            print("✅ Контекст получен, отправляем в Polza.ai")
+            print(f"📚 Найден контекст: {context[:200]}...")
             return await call_polza_with_context(message, context)
         else:
             return "❌ Не удалось найти информацию в базе знаний. Пожалуйста, переформулируйте запрос."
     else:
         return "⚠️ MCP_HUB_TOKEN не задан! Поиск в базе знаний недоступен."
 
-# --- FastAPI handlers ---
+# --- MCP-обработчик для внешних клиентов ---
+
 @app.options("/mcp")
 async def options_mcp():
     return Response(
@@ -169,7 +210,7 @@ async def mcp_handler(request: Request):
                 "result": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {"tools": {}},
-                    "serverInfo": {"name": "Xiaozhi Adapter (MCP Hub)", "version": "1.0.0"}
+                    "serverInfo": {"name": "Xiaozhi Adapter", "version": "1.0.0"}
                 }
             }
             response = JSONResponse(response_data)
