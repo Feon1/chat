@@ -3,387 +3,391 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Feon Chat</title>
+    <title>Феон - Статус</title>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Nunito', 'Noto Sans Mono', sans-serif;
+            background: url('https://raw.githubusercontent.com/Feon1/chat/main/background.jpg') center/cover fixed;
             min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        body::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.4);
+            z-index: 0;
+        }
+
+        .widget-container {
+            position: relative;
+            z-index: 1;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .status-indicator {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            margin: 0 auto 20px;
             display: flex;
             align-items: center;
             justify-content: center;
-            overflow: hidden; /* Чтобы не было скролла во время загрузки */
+            position: relative;
+            background: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
         }
 
-        /* Глобальный экран подключения */
-        .global-overlay {
+        .status-indicator::before {
+            content: '';
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #ffa500;
+            box-shadow: 0 0 0 0 rgba(255, 165, 0, 0.7);
+            animation: pulse-orange 2s infinite;
+        }
+
+        .status-indicator.loading::before {
+            background: #ffa500;
+            box-shadow: 0 0 0 0 rgba(255, 165, 0, 0.7);
+            animation: pulse-orange 2s infinite;
+        }
+
+        .status-indicator.online::before {
+            background: #4CAF50;
+            box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7);
+            animation: pulse-green 2s infinite;
+        }
+
+        .status-indicator.offline::before {
+            background: #f44336;
+            box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
+            animation: pulse-red 2s infinite;
+        }
+
+        @keyframes pulse-orange {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(255, 165, 0, 0.7);
+            }
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 20px rgba(255, 165, 0, 0);
+            }
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(255, 165, 0, 0);
+            }
+        }
+
+        @keyframes pulse-green {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7);
+            }
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 20px rgba(76, 175, 80, 0);
+            }
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+            }
+        }
+
+        @keyframes pulse-red {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
+            }
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 20px rgba(244, 67, 54, 0);
+            }
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(244, 67, 54, 0);
+            }
+        }
+
+        h1 {
+            color: #fff;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            font-weight: 700;
+        }
+
+        .status-text {
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 1.1em;
+            margin-bottom: 30px;
+            text-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+        }
+
+        .loading-text {
+            color: #ffa500;
+            font-weight: 600;
+        }
+
+        .online-text {
+            color: #4CAF50;
+            font-weight: 600;
+        }
+
+        .offline-text {
+            color: #f44336;
+            font-weight: 600;
+        }
+
+        .hint-text {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9em;
+            margin-bottom: 25px;
+            font-style: italic;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .chat-button {
+            display: inline-block;
+            padding: 15px 40px;
+            background: rgba(255, 255, 255, 0.2);
+            color: #fff;
+            text-decoration: none;
+            border-radius: 50px;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            font-size: 1.1em;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(5px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            margin-bottom: 30px;
+        }
+
+        .chat-button:hover {
+            background: rgba(255, 255, 255, 0.3);
+            border-color: rgba(255, 255, 255, 0.8);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .chat-button:active {
+            transform: translateY(0);
+        }
+
+        footer {
+            position: relative;
+            z-index: 1;
+            margin-top: 40px;
+            text-align: center;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.85em;
+        }
+
+        footer a {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+
+        footer a:hover {
+            color: #fff;
+            text-decoration: underline;
+        }
+
+        .footer-donate {
+            color: #ff6b6b;
+            font-weight: 600;
+        }
+
+        .footer-divider {
+            margin: 0 10px;
+            opacity: 0.5;
+        }
+
+        .loader-overlay {
             position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
             z-index: 9999;
-            transition: opacity 0.6s ease, visibility 0.6s ease;
+            backdrop-filter: blur(5px);
         }
 
-        .global-overlay.hidden {
-            opacity: 0;
-            visibility: hidden;
-            pointer-events: none;
-        }
-
-        .global-content {
-            text-align: center;
-            color: white;
-        }
-
-        .global-spinner {
-            width: 60px; height: 60px;
-            border: 5px solid rgba(255,255,255,0.2);
-            border-top: 5px solid white;
+        .loader-spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #fff;
             border-radius: 50%;
             animation: spin 1s linear infinite;
-            margin: 0 auto 25px;
         }
 
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-        .global-content p {
-            font-size: 20px;
-            font-weight: 500;
-            letter-spacing: 0.5px;
-            transition: all 0.3s ease;
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
         }
 
-        .global-content .success {
-            color: #4CAF50;
-            font-weight: bold;
-            text-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        .loader-text {
+            color: #fff;
+            margin-top: 20px;
+            font-size: 1.1em;
+            text-align: center;
         }
 
-        .global-content .error {
-            color: #ff6b6b;
-            font-size: 16px;
+        .loader-text small {
+            display: block;
+            margin-top: 10px;
+            font-size: 0.85em;
+            opacity: 0.7;
         }
-
-        /* Кнопка открытия чата (скрыта по умолчанию) */
-        .chat-launcher {
-            position: fixed;
-            bottom: 30px; right: 30px;
-            width: 60px; height: 60px;
-            background: white;
-            border-radius: 50%;
-            border: none;
-            color: #667eea;
-            font-size: 28px;
-            cursor: pointer;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-            transition: transform 0.3s;
-            z-index: 1000;
-            display: none; /* Скрыта до подключения */
-        }
-
-        .chat-launcher.visible { display: flex; align-items: center; justify-content: center; }
-        .chat-launcher:hover { transform: scale(1.1); }
-
-        /* Виджет чата */
-        .chat-widget {
-            position: fixed;
-            bottom: 30px; right: 30px;
-            width: 380px; height: 600px;
-            background: white;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            display: none;
-            flex-direction: column;
-            overflow: hidden;
-            z-index: 1000;
-        }
-
-        .chat-widget.open { display: flex; }
-
-        /* Шапка чата */
-        .chat-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white; padding: 16px 20px;
-            display: flex; justify-content: space-between; align-items: center;
-        }
-        .chat-header .title { font-size: 18px; font-weight: 600; }
-        .chat-header .status { display: flex; align-items: center; gap: 8px; font-size: 12px; opacity: 0.9; }
-        .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #4CAF50; box-shadow: 0 0 8px rgba(76,175,80,0.8); }
-        .close-btn { background: none; border: none; color: white; font-size: 24px; cursor: pointer; }
-
-        /* Сообщения */
-        .messages { flex: 1; overflow-y: auto; padding: 20px; background: #f8f9fa; }
-        .message { margin-bottom: 15px; display: flex; flex-direction: column; }
-        .message.user { align-items: flex-end; }
-        .message.bot { align-items: flex-start; }
-        .message-content { max-width: 80%; padding: 12px 16px; border-radius: 16px; font-size: 14px; line-height: 1.5; word-wrap: break-word; }
-        .message.user .message-content { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-bottom-right-radius: 4px; }
-        .message.bot .message-content { background: white; color: #333; border-bottom-left-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-        .message-time { font-size: 11px; color: #999; margin-top: 5px; padding: 0 5px; }
-
-        /* Индикатор набора */
-        .typing-indicator { display: none; padding: 15px 20px; background: #f8f9fa; }
-        .typing-indicator.active { display: flex; gap: 5px; align-items: center; }
-        .typing-indicator span { width: 8px; height: 8px; border-radius: 50%; background: #667eea; animation: bounce 1.4s infinite ease-in-out; }
-        .typing-indicator span:nth-child(1) { animation-delay: 0s; }
-        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
-        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
-        @keyframes bounce { 0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; } 40% { transform: scale(1); opacity: 1; } }
-
-        /* Область ввода */
-        .input-area { padding: 15px 20px; background: white; border-top: 1px solid #e0e0e0; display: flex; gap: 10px; align-items: flex-end; }
-        .input-area textarea { flex: 1; padding: 12px 15px; border: 1px solid #e0e0e0; border-radius: 20px; font-size: 14px; font-family: inherit; resize: none; max-height: 100px; outline: none; transition: border-color 0.2s; }
-        .input-area textarea:focus { border-color: #667eea; }
-        .input-area button { width: 44px; height: 44px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; border-radius: 50%; color: white; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: transform 0.2s; flex-shrink: 0; }
-        .input-area button:hover:not(:disabled) { transform: scale(1.1); }
-        .input-area button:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        /* Скроллбар */
-        .messages::-webkit-scrollbar { width: 6px; }
-        .messages::-webkit-scrollbar-track { background: transparent; }
-        .messages::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
 
         @media (max-width: 480px) {
-            .chat-widget { width: 100%; height: 100%; bottom: 0; right: 0; border-radius: 0; }
-            .chat-launcher { bottom: 20px; right: 20px; }
+            .widget-container {
+                padding: 30px 20px;
+            }
+
+            h1 {
+                font-size: 2em;
+            }
+
+            .status-indicator {
+                width: 60px;
+                height: 60px;
+            }
         }
     </style>
 </head>
 <body>
-
-    <!-- Глобальный экран подключения -->
-    <div id="globalOverlay" class="global-overlay">
-        <div class="global-content">
-            <div class="global-spinner"></div>
-            <p id="globalStatus">Подключение к серверу...</p>
+    <div class="loader-overlay" id="loaderOverlay">
+        <div class="loader-spinner"></div>
+        <div class="loader-text">
+            Загрузка чата...
+            <small>Пожалуйста, подождите</small>
         </div>
     </div>
 
-    <!-- Кнопка открытия чата -->
-    <button id="launcherBtn" class="chat-launcher">💬</button>
-
-    <!-- Виджет чата -->
-    <div id="chatWidget" class="chat-widget">
-        <div class="chat-header">
-            <div>
-                <div class="title">Feon Chat</div>
-                <div class="status">
-                    <div class="status-dot"></div>
-                    <span id="headerStatusText">Онлайн</span>
-                </div>
-            </div>
-            <button id="closeChatBtn" class="close-btn">×</button>
-        </div>
-
-        <div id="messages" class="messages"></div>
-
-        <div id="typingIndicator" class="typing-indicator">
-            <span></span><span></span><span></span>
-        </div>
-
-        <div class="input-area">
-            <textarea id="messageInput" placeholder="Введите сообщение..." rows="1" maxlength="1000"></textarea>
-            <button id="sendButton">➤</button>
-        </div>
+    <div class="widget-container">
+        <div class="status-indicator loading" id="statusIndicator"></div>
+        <h1>Феон</h1>
+        <div class="status-text loading-text" id="statusText">Проверка соединения...</div>
+        <div class="hint-text hidden" id="hintText">Нажмите на значок чата</div>
+        <a href="https://vk.com/club136655585" target="_blank" class="chat-button hidden" id="vkButton">
+            💬 Написать в ВК
+        </a>
     </div>
+
+    <footer>
+        <span class="footer-donate">❤️ Donate</span>
+        <span class="footer-divider">|</span>
+        <a href="https://yoomoney.ru/to/4100119548371455" target="_blank" class="footer-link">💳 ЮMoney: 4100119548371455</a>
+        <span class="footer-divider">|</span>
+        <a href="mailto:feon.5upport@ya.ru" class="footer-link">📧 support:feon.5upport@ya.ru</a>
+    </footer>
 
     <script>
-    (function(){
-        // Элементы DOM
-        const globalOverlay = document.getElementById('globalOverlay');
-        const globalStatus = document.getElementById('globalStatus');
-        const launcherBtn = document.getElementById('launcherBtn');
-        const chatWidget = document.getElementById('chatWidget');
-        const closeChatBtn = document.getElementById('closeChatBtn');
-        const messages = document.getElementById('messages');
-        const messageInput = document.getElementById('messageInput');
-        const sendButton = document.getElementById('sendButton');
-        const typingIndicator = document.getElementById('typingIndicator');
-
-        const API_URL = 'https://docker-new-chat.onrender.com/query';
-        const HISTORY_URL = 'https://docker-new-chat.onrender.com/get_history';
-        const PING_URL = 'https://docker-new-chat.onrender.com/';
-
-        // User ID
-        let userId = localStorage.getItem('xiaozhi_user_id');
-        if (!userId) {
-            userId = 'user_' + Math.random().toString(36).substr(2, 9);
-            localStorage.setItem('xiaozhi_user_id', userId);
-        }
-
-        let isConnected = false;
-
-        // Функция пинга
-        function pingServer(callback) {
-            const xhr = new XMLHttpRequest();
-            xhr.open('GET', PING_URL, true);
-            xhr.timeout = 5000;
-            xhr.onload = function() { callback(this.status === 200 || this.status === 404); };
-            xhr.onerror = function() { callback(false); };
-            xhr.ontimeout = function() { callback(false); };
-            try { xhr.send(); } catch(e) { callback(false); }
-        }
-
-        // Главная функция подключения
-        function attemptConnection() {
-            pingServer((success) => {
-                if (success) {
-                    // Успех!
-                    globalStatus.textContent = 'Соединение установлено';
-                    globalStatus.classList.add('success');
-                    isConnected = true;
-                    
-                    // Ждем полсекунды, чтобы пользователь увидел зеленый текст, и скрываем оверлей
-                    setTimeout(() => {
-                        globalOverlay.classList.add('hidden');
-                        launcherBtn.classList.add('visible'); // Показываем кнопку чата
-                    }, 600);
-                } else {
-                    // Ошибка
-                    globalStatus.textContent = 'Ошибка подключения. Повтор...';
-                    globalStatus.classList.add('error');
-                    setTimeout(attemptConnection, 3000);
-                }
-            });
-        }
-
-        // Запуск пинга СРАЗУ при загрузке страницы
-        document.addEventListener('DOMContentLoaded', attemptConnection);
-
-        // Открытие/закрытие чата
-        function openChat() {
-            if (!isConnected) return; // Защита от открытия до подключения
-            chatWidget.classList.add('open');
-            launcherBtn.classList.remove('visible');
-            loadHistory();
-            messageInput.focus();
-        }
-
-        function closeChat() {
-            chatWidget.classList.remove('open');
-            launcherBtn.classList.add('visible');
-        }
-
-        launcherBtn.addEventListener('click', openChat);
-        closeChatBtn.addEventListener('click', closeChat);
-
-        // Загрузка истории
-        async function loadHistory() {
-            messages.innerHTML = '';
-            try {
-                const res = await fetch(`${HISTORY_URL}?user_id=${userId}`);
-                const data = await res.json();
-                if (data.messages && data.messages.length > 0) {
-                    data.messages.forEach(msg => {
-                        addMessage(msg.content, msg.role === 'user' ? 'user' : 'bot',
-                            new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
-                    });
-                } else {
-                    addMessage('Привет! Я ваш умный помощник. Задайте мне любой вопрос.', 'bot',
-                        new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
-                }
-            } catch (e) { console.error('Ошибка загрузки истории', e); }
-        }
-
-        // Добавление сообщения
-        function addMessage(text, sender, time) {
-            const div = document.createElement('div');
-            div.className = 'message ' + sender;
-            const content = document.createElement('div');
-            content.className = 'message-content';
-            content.innerHTML = text.replace(/\n/g, '<br>');
-            const timeSpan = document.createElement('div');
-            timeSpan.className = 'message-time';
-            timeSpan.textContent = time;
-            div.appendChild(content);
-            div.appendChild(timeSpan);
-            messages.appendChild(div);
-            messages.scrollTop = messages.scrollHeight;
-        }
-
-        // Отправка сообщения
-        async function sendMessage() {
-            const text = messageInput.value.trim();
-            if (!text || !isConnected) return;
-
-            addMessage(text, 'user', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
-            messageInput.value = '';
-            messageInput.style.height = 'auto';
-            sendButton.disabled = true;
-            typingIndicator.classList.add('active');
+        // Проверка статуса соединения
+        async function checkStatus() {
+            const statusIndicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            const hintText = document.getElementById('hintText');
+            const vkButton = document.getElementById('vkButton');
+            const loaderOverlay = document.getElementById('loaderOverlay');
 
             try {
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text, user_id: userId })
-                });
-                const data = await response.json();
-                typingIndicator.classList.remove('active');
+                // Имитация проверки соединения
+                await new Promise(resolve => setTimeout(resolve, 1500));
+
+                // Проверяем доступность VK группы
+                const vkUrl = 'https://vk.com/club136655585';
                 
-                if (data.answer) {
-                    addMessage(data.answer, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
-                } else if (data.error) {
-                    addMessage('Ошибка: ' + data.error, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
+                // Простая проверка доступности
+                const checkVK = await fetch(vkUrl, { 
+                    method: 'HEAD',
+                    mode: 'no-cors'
+                }).then(() => true).catch(() => false);
+
+                if (checkVK) {
+                    // Онлайн
+                    statusIndicator.className = 'status-indicator online';
+                    statusText.className = 'status-text online-text';
+                    statusText.textContent = 'Феон на связи';
+                    hintText.classList.remove('hidden');
+                    vkButton.classList.remove('hidden');
+                } else {
+                    // Офлайн
+                    statusIndicator.className = 'status-indicator offline';
+                    statusText.className = 'status-text offline-text';
+                    statusText.textContent = 'Временно недоступен';
                 }
-            } catch (err) {
-                typingIndicator.classList.remove('active');
-                addMessage('Ошибка соединения', 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
+
+            } catch (error) {
+                console.error('Ошибка проверки статуса:', error);
+                statusIndicator.className = 'status-indicator offline';
+                statusText.className = 'status-text offline-text';
+                statusText.textContent = 'Ошибка соединения';
             } finally {
-                sendButton.disabled = false;
-                messageInput.focus();
+                // Скрываем загрузчик
+                setTimeout(() => {
+                    loaderOverlay.style.opacity = '0';
+                    setTimeout(() => {
+                        loaderOverlay.classList.add('hidden');
+                    }, 300);
+                }, 500);
             }
         }
 
-        sendButton.addEventListener('click', sendMessage);
-        messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-        });
-        messageInput.addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 100) + 'px';
-        });
+        // Запускаем проверку при загрузке страницы
+        window.addEventListener('load', checkStatus);
 
-        // Периодический пинг (каждые 30 сек)
-        setInterval(() => {
-            if (isConnected) {
-                pingServer((success) => {
-                    if (!success) {
-                        isConnected = false;
-                        globalStatus.textContent = 'Соединение потеряно. Переподключение...';
-                        globalStatus.className = 'error';
-                        globalOverlay.classList.remove('hidden');
-                        launcherBtn.classList.remove('visible');
-                        chatWidget.classList.remove('open');
-                        setTimeout(attemptConnection, 2000);
-                    }
-                });
-            }
-        }, 30000);
-
-        // Обработчики сети
-        window.addEventListener('offline', () => {
-            if (isConnected) {
-                isConnected = false;
-                globalStatus.textContent = 'Нет интернета';
-                globalStatus.className = 'error';
-                globalOverlay.classList.remove('hidden');
-                launcherBtn.classList.remove('visible');
-            }
-        });
-        window.addEventListener('online', () => {
-            if (!isConnected) {
-                globalStatus.textContent = 'Восстановление сети...';
-                globalStatus.className = '';
-                attemptConnection();
-            }
-        });
-    })();
+        // Перепроверка каждые 30 секунд
+        setInterval(checkStatus, 30000);
     </script>
 </body>
 </html>
