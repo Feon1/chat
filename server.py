@@ -304,57 +304,68 @@ async def upload_document(file: UploadFile = File(...)):
 
 @app.post("/query")
 async def handle_query(request: Request):
-    """Обработка запроса с историей"""
+    """Обработка любого запроса через умный LLM с историей и RAG"""
     try:
         body = await request.json()
         text = body.get("text", "")
         user_id = body.get("user_id", "anonymous")
         
+        # 1. Проверка на пустоту
         if not text:
             return JSONResponse({"error": "Текст пуст"}, status_code=400)
 
-        # Сохраняем сообщение пользователя
+        # 2. Ограничение длины сообщения (максимум 1000 символов)
+        if len(text) > 1000:
+            return JSONResponse({
+                "error": "Сообщение слишком длинное. Максимум 1000 символов."
+            }, status_code=400)
+
+        print(f"🧠 Запрос от {user_id}: '{text[:50]}...'")
+
+        # 3. Сохраняем сообщение пользователя в историю
         save_to_history(user_id, "user", text)
 
-        if len(text) > 40:
-            print(f" Длинный запрос от {user_id}")
-            
-            # Получаем последние 5 сообщений для контекста
-            history = get_history(user_id, limit=10)
-            recent_history = history[-5:] if len(history) > 5 else history
-            
-            chat_history_str = ""
-            for msg in recent_history:
-                role = "Пользователь" if msg['role'] == 'user' else "Ассистент"
-                chat_history_str += f"{role}: {msg['content']}\n"
+        # 4. Получаем последние 6 сообщений для контекста (3 пары вопрос-ответ)
+        history = get_history(user_id, limit=6)
+        
+        chat_history_str = ""
+        for msg in history:
+            role = "Пользователь" if msg['role'] == 'user' else "Ассистент"
+            chat_history_str += f"{role}: {msg['content']}\n"
 
-            context = await search_knowledge(text)
-            
-            prompt = ""
-            if chat_history_str:
-                prompt += f"История диалога:\n{chat_history_str}\n\n"
-            if context:
-                prompt += f"Контекст из базы знаний:\n{context}\n\n"
-            prompt += f"Вопрос: {text}"
+        # 5. Ищем дополнительный контекст в базе знаний
+        context = await search_knowledge(text)
+        
+        # 6. Формируем умный промпт
+        prompt = ""
+        if chat_history_str:
+            prompt += f"История текущего диалога:\n{chat_history_str}\n\n"
+        if context:
+            prompt += f"Дополнительный КОНТЕКСТ из базы знаний:\n{context}\n\n"
+        
+        prompt += f"Вопрос пользователя: {text}\n\nДай полезный, точный и развернутый ответ."
 
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    "https://api.polza.ai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"},
-                    json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3},
-                    timeout=30.0
-                )
-                answer = response.json()["choices"][0]["message"]["content"]
-            
-            # Сохраняем ответ бота
-            save_to_history(user_id, "bot", answer)
-            
-            return JSONResponse({"answer": answer, "source": "rag_llm"})
-        else:
-            return JSONResponse({"answer": "Короткий запрос", "source": "short"})
+        # 7. Вызываем LLM (DeepSeek через Polza.ai)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.polza.ai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": "deepseek-chat", 
+                    "messages": [{"role": "user", "content": prompt}], 
+                    "temperature": 0.3
+                },
+                timeout=30.0
+            )
+            answer = response.json()["choices"][0]["message"]["content"]
+        
+        # 8. Сохраняем ответ бота в историю
+        save_to_history(user_id, "bot", answer)
+        
+        return JSONResponse({"answer": answer, "source": "rag_llm"})
 
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
+        print(f"❌ Ошибка в /query: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/get_history")
