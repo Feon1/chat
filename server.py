@@ -1,169 +1,198 @@
 import os
 import json
 import asyncio
-from fastapi import FastAPI, Request
+import uuid
+from datetime import datetime
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi import UploadFile, File
-import io
-from pypdf import PdfReader
-from docx import Document
-from supabase import create_client, Client
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Загрузка переменных окружения
 load_dotenv()
 
-app = FastAPI(title="XiaoZhi RAG Adapter (Jina)")
-# Разрешаем запросы с вашего GitHub Pages и любых других источников
+app = FastAPI(title="XiaoZhi RAG Adapter")
+
+# Разрешаем CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # В продакшене лучше указать ["https://feon1.github.io"]
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ==========================================
-# НАСТРОЙКИ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
+# НАСТРОЙКИ
 # ==========================================
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
-JINA_API_KEY = os.getenv("JINA_API_KEY") # Новый ключ Jina
+JINA_API_KEY = os.getenv("JINA_API_KEY")
 
 COLLECTION_NAME = "xiaozhi_knowledge"
+HISTORY_COLLECTION = "chat_history"
+JINA_API_URL = "https://api.jina.ai/v1/embeddings"
 
-
-
-# Инициализация клиента Qdrant
 qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 
 @app.on_event("startup")
 async def startup_event():
-    """Проверяем или создаем коллекцию при запуске сервера"""
+    """Создаем коллекции при запуске"""
+    # Коллекция для базы знаний
     try:
         qdrant.get_collection(COLLECTION_NAME)
-        print(f"✅ Коллекция '{COLLECTION_NAME}' успешно найдена в Qdrant")
+        print(f"✅ Коллекция '{COLLECTION_NAME}' найдена")
     except Exception:
         qdrant.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
         )
-        print(f"✅ Коллекция '{COLLECTION_NAME}' успешно создана в Qdrant")
-
-
-# ==========================================
-# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: ПОЛУЧЕНИЕ ВЕКТОРА (JINA)
-# ==========================================
-def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> list[str]:
-    """Разбивает длинный текст на перекрывающиеся фрагменты для лучшего поиска"""
-    chunks = []
-    # Сначала разбиваем на абзацы, чтобы не резать предложения посередине
-    paragraphs = text.split('\n\n')
-    current_chunk = ""
+        print(f"✅ Коллекция '{COLLECTION_NAME}' создана")
     
-    for para in paragraphs:
-        para = para.strip()
-        if not para:
-            continue
-            
-        if len(current_chunk) + len(para) <= chunk_size:
-            current_chunk += (("\n\n" if current_chunk else "") + para)
-        else:
-            if current_chunk:
-                chunks.append(current_chunk)
-            # Если один абзац сам по себе больше chunk_size, режем его жестко
-            if len(para) > chunk_size:
-                for i in range(0, len(para), chunk_size - overlap):
-                    chunks.append(para[i:i + chunk_size])
-                current_chunk = ""
-            else:
-                current_chunk = para
-                
-    if current_chunk:
-        chunks.append(current_chunk)
-        
-    # Фильтруем слишком короткие бессмысленные куски
-    return [c for c in chunks if len(c.strip()) > 30]
+    # Коллекция для истории чатов (используем фиктивный вектор размера 1)
+    try:
+        qdrant.get_collection(HISTORY_COLLECTION)
+        print(f"✅ Коллекция '{HISTORY_COLLECTION}' найдена")
+    except Exception:
+        qdrant.create_collection(
+            collection_name=HISTORY_COLLECTION,
+            vectors_config=models.VectorParams(size=1, distance=models.Distance.COSINE),
+        )
+        print(f"✅ Коллекция '{HISTORY_COLLECTION}' создана")
+
+# ==========================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ==========================================
 async def get_embedding(text: str) -> list[float]:
-    """Получает вектор текста через стабильный API Jina AI"""
-    headers = {
-        "Authorization": f"Bearer {JINA_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
+    """Получает вектор через Jina AI"""
+    headers = {"Authorization": f"Bearer {JINA_API_KEY}", "Content-Type": "application/json"}
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "https://api.jina.ai/v1/embeddings",
-            json={
-                "model": "jina-embeddings-v3", # Отличная мультиязычная модель
-                "input": [text],
-                "task": "text-matching",
-                "dimensions": 384 # Запрашиваем 384, чтобы совпадало с Qdrant!
-            },
+            JINA_API_URL,
+            json={"model": "jina-embeddings-v3", "input": [text], "task": "text-matching", "dimensions": 384},
             headers=headers,
             timeout=30.0
         )
-        
-        # Jina возвращает четкую ошибку, если что-то не так
         response.raise_for_status()
-        result = response.json()
-        
-        # Извлекаем вектор из ответа Jina
-        return result["data"][0]["embedding"]
+        return response.json()["data"][0]["embedding"]
 
-
-# ==========================================
-# ЭНДПОИНТ 1: ДОБАВЛЕНИЕ ЗНАНИЙ
-# ==========================================
-@app.post("/add_knowledge")
-async def add_knowledge(request: Request):
-    """Добавляет текстовый фрагмент в векторную базу данных"""
+async def search_knowledge(query: str) -> str:
+    """Ищет контекст в базе знаний"""
     try:
-        body = await request.json()
-        text = body.get("text", "")
-        
-        if not text or len(text.strip()) < 10:
-            return JSONResponse({"error": "Текст слишком короткий или отсутствует"}, status_code=400)
-            
-        print(f"🔄 Запрос вектора Jina для текста: '{text[:50]}...'")
-        doc_vector = await get_embedding(text)
-        print("✅ Вектор успешно получен от Jina AI")
-        
-        qdrant.upsert(
+        query_vector = await get_embedding(query)
+        search_result = qdrant.search(
             collection_name=COLLECTION_NAME,
+            query_vector=query_vector,
+            limit=3,
+            with_payload=True
+        )
+        if not search_result:
+            return ""
+        return "\n\n".join([hit.payload.get("text", "") for hit in search_result if hit.payload])
+    except Exception as e:
+        print(f"⚠️ Ошибка поиска: {e}")
+        return ""
+
+def save_to_history(user_id: str, role: str, content: str):
+    """Сохраняет сообщение в историю (Qdrant)"""
+    try:
+        message_id = str(uuid.uuid4())
+        timestamp = datetime.utcnow().isoformat()
+        
+        # Используем фиктивный вектор [1.0], так как поиск по истории не нужен
+        qdrant.upsert(
+            collection_name=HISTORY_COLLECTION,
             points=[
                 models.PointStruct(
-                    id=abs(hash(text)) % 1000000000,
-                    vector=doc_vector,
-                    payload={"text": text}
+                    id=abs(hash(message_id)) % 1000000000,
+                    vector=[1.0],
+                    payload={
+                        "message_id": message_id,
+                        "user_id": user_id,
+                        "role": role,
+                        "content": content,
+                        "timestamp": timestamp
+                    }
                 )
             ]
         )
-        print("✅ Успешно сохранено в Qdrant")
-        return JSONResponse({"status": "success", "message": "Знание успешно добавлено в базу"})
-        
+        print(f"✅ Сообщение сохранено в историю для {user_id}")
     except Exception as e:
-        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА в /add_knowledge: {str(e)}")
+        print(f"⚠️ Ошибка сохранения истории: {e}")
+
+def get_history(user_id: str, limit: int = 50) -> list[dict]:
+    """Получает историю сообщений пользователя"""
+    try:
+        # Используем scroll для получения всех сообщений пользователя
+        records, next_page = qdrant.scroll(
+            collection_name=HISTORY_COLLECTION,
+            scroll_filter=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="user_id",
+                        match=models.MatchValue(value=user_id)
+                    )
+                ]
+            ),
+            limit=limit,
+            with_payload=True
+        )
+        
+        # Сортируем по времени (от старых к новым)
+        messages = sorted(
+            [r.payload for r in records if r.payload],
+            key=lambda x: x.get("timestamp", "")
+        )
+        
+        return messages
+    except Exception as e:
+        print(f"⚠️ Ошибка получения истории: {e}")
+        return []
+
+# ==========================================
+# ЭНДПОИНТЫ
+# ==========================================
+@app.get("/")
+def read_root():
+    """Проверка работоспособности"""
+    return {"status": "running", "message": "XiaoZhi RAG Adapter работает!"}
+
+@app.post("/add_knowledge")
+async def add_knowledge(request: Request):
+    """Добавляет текст в базу знаний"""
+    try:
+        body = await request.json()
+        text = body.get("text", "")
+        if not text or len(text.strip()) < 10:
+            return JSONResponse({"error": "Текст слишком короткий"}, status_code=400)
+        
+        doc_vector = await get_embedding(text)
+        qdrant.upsert(
+            collection_name=COLLECTION_NAME,
+            points=[models.PointStruct(
+                id=abs(hash(text)) % 1000000000,
+                vector=doc_vector,
+                payload={"text": text}
+            )]
+        )
+        return JSONResponse({"status": "success", "message": "Знание добавлено"})
+    except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/upload_document")
 async def upload_document(file: UploadFile = File(...)):
-    """Загружает PDF или DOCX, разбивает на чанки и добавляет в Qdrant"""
+    """Загружает PDF/DOCX в базу знаний"""
     try:
+        import io
+        from pypdf import PdfReader
+        from docx import Document
+        
         filename = file.filename.lower()
         content = await file.read()
         text = ""
-        
-        print(f"📄 Обработка файла: {file.filename} ({len(content)} байт)")
         
         if filename.endswith('.pdf'):
             reader = PdfReader(io.BytesIO(content))
@@ -173,120 +202,88 @@ async def upload_document(file: UploadFile = File(...)):
             text = "\n\n".join([para.text for para in doc.paragraphs])
         else:
             return JSONResponse({"error": "Поддерживаются только .pdf и .docx"}, status_code=400)
-            
-        if not text.strip():
-            return JSONResponse({"error": "Не удалось извлечь текст из документа"}, status_code=400)
-            
+        
         # Разбиваем на чанки
-        chunks = chunk_text(text)
-        print(f"✅ Документ разбит на {len(chunks)} фрагментов")
+        chunks = []
+        paragraphs = text.split('\n\n')
+        current_chunk = ""
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            if len(current_chunk) + len(para) <= 800:
+                current_chunk += (("\n\n" if current_chunk else "") + para)
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                if len(para) > 800:
+                    for i in range(0, len(para), 700):
+                        chunks.append(para[i:i + 800])
+                    current_chunk = ""
+                else:
+                    current_chunk = para
+        if current_chunk:
+            chunks.append(current_chunk)
+        chunks = [c for c in chunks if len(c.strip()) > 30]
         
         success_count = 0
         for i, chunk in enumerate(chunks):
             try:
-                # Получаем вектор для каждого фрагмента
                 doc_vector = await get_embedding(chunk)
-                
-                # Сохраняем в Qdrant, добавляя имя файла в payload для справки
                 qdrant.upsert(
                     collection_name=COLLECTION_NAME,
-                    points=[
-                        models.PointStruct(
-                            id=abs(hash(f"{file.filename}_{i}")) % 1000000000,
-                            vector=doc_vector,
-                            payload={"text": chunk, "source_file": file.filename}
-                        )
-                    ]
+                    points=[models.PointStruct(
+                        id=abs(hash(f"{file.filename}_{i}")) % 1000000000,
+                        vector=doc_vector,
+                        payload={"text": chunk, "source_file": file.filename}
+                    )]
                 )
                 success_count += 1
-                if i % 5 == 0:
-                    print(f"  ⏳ Обработано {i}/{len(chunks)} фрагментов...")
             except Exception as e:
-                print(f"  ⚠️ Пропуск фрагмента {i}: {e}")
-                
+                print(f"⚠️ Пропуск фрагмента {i}: {e}")
+        
         return JSONResponse({
-            "status": "success", 
-            "message": f"Успешно добавлено {success_count} из {len(chunks)} фрагментов из файла {file.filename}"
+            "status": "success",
+            "message": f"Добавлено {success_count} из {len(chunks)} фрагментов"
         })
-        
     except Exception as e:
-        print(f"❌ Ошибка загрузки документа: {str(e)}")
         return JSONResponse({"error": str(e)}, status_code=500)
-# ==========================================
-# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: ПОИСК В БАЗЕ
-# ==========================================
-async def search_knowledge(query: str) -> str:
-    """Ищет релевантный контекст в Qdrant"""
-    try:
-        query_vector = await get_embedding(query)
-        
-        search_result = qdrant.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=query_vector,
-            limit=3,
-            with_payload=True  # Явно указываем, что нам нужен текст (payload)
-        )
-        
-        if not search_result:
-            return ""
-            
-        fragments = [hit.payload.get("text", "") for hit in search_result if hit.payload]
-        return "\n\n".join(fragments)
-        
-    except AttributeError as e:
-        print(f"⚠️ Ошибка версии Qdrant (AttributeError): {e}")
-        return ""
-    except Exception as e:
-        print(f"⚠️ Ошибка поиска в Qdrant: {e}")
-        return ""
 
-
-# ==========================================
-# ЭНДПОИНТ 2: ОБРАБОТКА ЗАПРОСА (МАРШРУТИЗАТОР)
-# ==========================================
 @app.post("/query")
 async def handle_query(request: Request):
+    """Обработка запроса с историей"""
     try:
         body = await request.json()
         text = body.get("text", "")
-        user_id = body.get("user_id", "anonymous") # Получаем ID пользователя
+        user_id = body.get("user_id", "anonymous")
         
         if not text:
-            return JSONResponse({"error": "Текст запроса пуст"}, status_code=400)
+            return JSONResponse({"error": "Текст пуст"}, status_code=400)
 
-        # 1. Сохраняем сообщение пользователя в историю
-        supabase.table("chat_history").insert({"user_id": user_id, "role": "user", "content": text}).execute()
+        # Сохраняем сообщение пользователя
+        save_to_history(user_id, "user", text)
 
         if len(text) > 40:
-            print(f"🧠 Длинный запрос от {user_id}, используем RAG + LLM")
+            print(f" Длинный запрос от {user_id}")
             
-            # 2. Получаем последние 5 сообщений этого пользователя для контекста (память)
-            history_response = supabase.table("chat_history") \
-                .select("role, content") \
-                .eq("user_id", user_id) \
-                .order("created_at", desc=True) \
-                .limit(5) \
-                .execute()
+            # Получаем последние 5 сообщений для контекста
+            history = get_history(user_id, limit=10)
+            recent_history = history[-5:] if len(history) > 5 else history
             
-            # Формируем историю для промпта
             chat_history_str = ""
-            if history_response.data:
-                # Переворачиваем список, чтобы он шел от старого к новому
-                for msg in reversed(history_response.data):
-                    role = "Пользователь" if msg['role'] == 'user' else "Ассистент"
-                    chat_history_str += f"{role}: {msg['content']}\n"
+            for msg in recent_history:
+                role = "Пользователь" if msg['role'] == 'user' else "Ассистент"
+                chat_history_str += f"{role}: {msg['content']}\n"
 
             context = await search_knowledge(text)
             
             prompt = ""
             if chat_history_str:
-                prompt += f"История текущего диалога:\n{chat_history_str}\n\n"
+                prompt += f"История диалога:\n{chat_history_str}\n\n"
             if context:
-                prompt += f"Дополнительный КОНТЕКСТ из базы знаний:\n{context}\n\n"
-            
-            prompt += f"Ответь на вопрос пользователя: {text}"
+                prompt += f"Контекст из базы знаний:\n{context}\n\n"
+            prompt += f"Вопрос: {text}"
 
-            # 3. Вызываем LLM
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     "https://api.polza.ai/v1/chat/completions",
@@ -295,34 +292,28 @@ async def handle_query(request: Request):
                     timeout=30.0
                 )
                 answer = response.json()["choices"][0]["message"]["content"]
-                
-            # 4. Сохраняем ответ бота в историю
-            supabase.table("chat_history").insert({"user_id": user_id, "role": "bot", "content": answer}).execute()
+            
+            # Сохраняем ответ бота
+            save_to_history(user_id, "bot", answer)
             
             return JSONResponse({"answer": answer, "source": "rag_llm"})
-        
         else:
-            # Для коротких запросов (если вы подключите XiaoZhi) логика та же
-            return JSONResponse({"answer": "Короткий запрос (заглушка)", "source": "xiaozhi_short"})
+            return JSONResponse({"answer": "Короткий запрос", "source": "short"})
 
     except Exception as e:
-        print(f"❌ Ошибка в /query: {str(e)}")
+        print(f"❌ Ошибка: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
-# Эндпоинт для просмотра истории (для фронтенда)
 @app.get("/get_history")
-async def get_history(user_id: str):
-    """Возвращает последние 50 сообщений пользователя"""
+async def get_history_endpoint(user_id: str):
+    """Возвращает историю пользователя"""
     try:
-        response = supabase.table("chat_history") \
-            .select("role, content, created_at") \
-            .eq("user_id", user_id) \
-            .order("created_at", desc=True) \
-            .limit(50) \
-            .execute()
-        
-        # Переворачиваем, чтобы старые были сверху
-        messages = list(reversed(response.data))
+        messages = get_history(user_id, limit=50)
         return JSONResponse({"messages": messages})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
