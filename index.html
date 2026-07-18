@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Феон - Статус</title>
+    <title>Феон - Статус чата</title>
     <style>
         * {
             margin: 0;
@@ -12,25 +12,22 @@
         }
 
         body {
-            font-family: 'Nunito', 'Noto Sans Mono', sans-serif;
-            background: url('https://raw.githubusercontent.com/Feon1/chat/main/background.jpg') center/cover fixed;
+            font-family: 'Nunito', 'Segoe UI', sans-serif;
+            background: url('https://github.com/Feon1/new_chat/blob/main/sapce_background.JPG') center/cover fixed;
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             position: relative;
-            overflow: hidden;
+            overflow-x: hidden;
         }
 
         body::before {
             content: '';
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.4);
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
             z-index: 0;
         }
 
@@ -38,52 +35,40 @@
             position: relative;
             z-index: 1;
             background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 24px;
+            padding: 40px 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.15);
             text-align: center;
-            max-width: 400px;
+            max-width: 380px;
             width: 90%;
-            animation: fadeIn 0.5s ease-out;
+            animation: fadeIn 0.6s ease-out;
         }
 
         @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         .status-indicator {
-            width: 80px;
-            height: 80px;
+            width: 70px;
+            height: 70px;
             border-radius: 50%;
             margin: 0 auto 20px;
             display: flex;
             align-items: center;
             justify-content: center;
-            position: relative;
             background: rgba(255, 255, 255, 0.1);
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
         }
 
         .status-indicator::before {
             content: '';
-            width: 20px;
-            height: 20px;
+            width: 18px;
+            height: 18px;
             border-radius: 50%;
-            background: #ffa500;
-            box-shadow: 0 0 0 0 rgba(255, 165, 0, 0.7);
-            animation: pulse-orange 2s infinite;
-        }
-
-        .status-indicator.loading::before {
             background: #ffa500;
             box-shadow: 0 0 0 0 rgba(255, 165, 0, 0.7);
             animation: pulse-orange 2s infinite;
@@ -102,116 +87,106 @@
         }
 
         @keyframes pulse-orange {
-            0% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(255, 165, 0, 0.7);
-            }
-            70% {
-                transform: scale(1);
-                box-shadow: 0 0 0 20px rgba(255, 165, 0, 0);
-            }
-            100% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(255, 165, 0, 0);
-            }
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 165, 0, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 15px rgba(255, 165, 0, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(255, 165, 0, 0); }
         }
-
         @keyframes pulse-green {
-            0% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7);
-            }
-            70% {
-                transform: scale(1);
-                box-shadow: 0 0 0 20px rgba(76, 175, 80, 0);
-            }
-            100% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
-            }
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 15px rgba(76, 175, 80, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
         }
-
         @keyframes pulse-red {
-            0% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
-            }
-            70% {
-                transform: scale(1);
-                box-shadow: 0 0 0 20px rgba(244, 67, 54, 0);
-            }
-            100% {
-                transform: scale(0.95);
-                box-shadow: 0 0 0 0 rgba(244, 67, 54, 0);
-            }
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 15px rgba(244, 67, 54, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(244, 67, 54, 0); }
         }
 
         h1 {
             color: #fff;
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            font-size: 2.2em;
+            margin-bottom: 8px;
+            text-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
             font-weight: 700;
         }
 
         .status-text {
             color: rgba(255, 255, 255, 0.9);
-            font-size: 1.1em;
-            margin-bottom: 30px;
-            text-shadow: 0 1px 5px rgba(0, 0, 0, 0.3);
+            font-size: 1.05em;
+            margin-bottom: 10px;
+            min-height: 1.5em;
         }
 
-        .loading-text {
-            color: #ffa500;
-            font-weight: 600;
+        .ping-info {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.85em;
+            margin-bottom: 20px;
+            font-family: 'Courier New', monospace;
         }
 
-        .online-text {
-            color: #4CAF50;
-            font-weight: 600;
-        }
-
-        .offline-text {
-            color: #f44336;
-            font-weight: 600;
-        }
+        .loading-text { color: #ffa500; font-weight: 600; }
+        .online-text { color: #4CAF50; font-weight: 600; }
+        .offline-text { color: #f44336; font-weight: 600; }
 
         .hint-text {
             color: rgba(255, 255, 255, 0.7);
             font-size: 0.9em;
-            margin-bottom: 25px;
+            margin-bottom: 20px;
             font-style: italic;
         }
 
-        .hidden {
-            display: none !important;
-        }
+        .hidden { display: none !important; }
 
-        .chat-button {
-            display: inline-block;
-            padding: 15px 40px;
-            background: rgba(255, 255, 255, 0.2);
+        .vk-fallback-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 28px;
+            background: rgba(0, 119, 255, 0.2);
             color: #fff;
             text-decoration: none;
             border-radius: 50px;
-            border: 2px solid rgba(255, 255, 255, 0.5);
-            font-size: 1.1em;
+            border: 1px solid rgba(0, 119, 255, 0.5);
+            font-size: 1em;
             font-weight: 600;
             transition: all 0.3s ease;
             backdrop-filter: blur(5px);
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-            margin-bottom: 30px;
+            animation: fadeIn 0.5s ease-out;
         }
-
-        .chat-button:hover {
-            background: rgba(255, 255, 255, 0.3);
-            border-color: rgba(255, 255, 255, 0.8);
+        .vk-fallback-btn:hover {
+            background: rgba(0, 119, 255, 0.4);
+            border-color: rgba(0, 119, 255, 0.8);
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 6px 20px rgba(0, 119, 255, 0.3);
         }
 
-        .chat-button:active {
-            transform: translateY(0);
+        .chat-widget-floating {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            width: 60px;
+            height: 60px;
+            background: #4CAF50;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 28px;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(76, 175, 80, 0.5);
+            transition: all 0.3s ease;
+            z-index: 100;
+            animation: bounceIn 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        }
+        .chat-widget-floating:hover {
+            transform: scale(1.1);
+            box-shadow: 0 6px 25px rgba(76, 175, 80, 0.7);
+        }
+        @keyframes bounceIn {
+            0% { transform: scale(0); }
+            60% { transform: scale(1.1); }
+            100% { transform: scale(1); }
         }
 
         footer {
@@ -221,90 +196,53 @@
             text-align: center;
             color: rgba(255, 255, 255, 0.6);
             font-size: 0.85em;
+            padding: 0 20px;
         }
-
         footer a {
             color: rgba(255, 255, 255, 0.8);
             text-decoration: none;
             transition: color 0.3s;
         }
-
-        footer a:hover {
-            color: #fff;
-            text-decoration: underline;
-        }
-
-        .footer-donate {
-            color: #ff6b6b;
-            font-weight: 600;
-        }
-
-        .footer-divider {
-            margin: 0 10px;
-            opacity: 0.5;
-        }
+        footer a:hover { color: #fff; text-decoration: underline; }
+        .footer-donate { color: #ff6b6b; font-weight: 600; }
+        .footer-divider { margin: 0 8px; opacity: 0.4; }
 
         .loader-overlay {
             position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.8);
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             z-index: 9999;
-            backdrop-filter: blur(5px);
+            backdrop-filter: blur(8px);
+            transition: opacity 0.4s ease;
         }
-
         .loader-spinner {
-            width: 50px;
-            height: 50px;
-            border: 4px solid rgba(255, 255, 255, 0.1);
+            width: 45px;
+            height: 45px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
             border-top-color: #fff;
             border-radius: 50%;
-            animation: spin 1s linear infinite;
+            animation: spin 0.8s linear infinite;
         }
-
-        @keyframes spin {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-
+        @keyframes spin { to { transform: rotate(360deg); } }
         .loader-text {
             color: #fff;
             margin-top: 20px;
             font-size: 1.1em;
-            text-align: center;
         }
-
         .loader-text small {
             display: block;
-            margin-top: 10px;
+            margin-top: 8px;
             font-size: 0.85em;
-            opacity: 0.7;
-        }
-
-        @media (max-width: 480px) {
-            .widget-container {
-                padding: 30px 20px;
-            }
-
-            h1 {
-                font-size: 2em;
-            }
-
-            .status-indicator {
-                width: 60px;
-                height: 60px;
-            }
+            opacity: 0.6;
         }
     </style>
 </head>
 <body>
+
     <div class="loader-overlay" id="loaderOverlay">
         <div class="loader-spinner"></div>
         <div class="loader-text">
@@ -317,77 +255,163 @@
         <div class="status-indicator loading" id="statusIndicator"></div>
         <h1>Феон</h1>
         <div class="status-text loading-text" id="statusText">Проверка соединения...</div>
+        <div class="ping-info" id="pingInfo">Пинг: -- мс</div>
         <div class="hint-text hidden" id="hintText">Нажмите на значок чата</div>
-        <a href="https://vk.com/club136655585" target="_blank" class="chat-button hidden" id="vkButton">
+        
+        <a href="https://vk.com/club136655585" target="_blank" class="vk-fallback-btn hidden" id="vkButton">
             💬 Написать в ВК
         </a>
+    </div>
+
+    <div class="chat-widget-floating hidden" id="chatWidget" title="Открыть чат">
+        💬
     </div>
 
     <footer>
         <span class="footer-donate">❤️ Donate</span>
         <span class="footer-divider">|</span>
-        <a href="https://yoomoney.ru/to/4100119548371455" target="_blank" class="footer-link">💳 ЮMoney: 4100119548371455</a>
+        <a href="https://yoomoney.ru/to/4100119548371455" target="_blank">💳 ЮMoney: 4100119548371455</a>
         <span class="footer-divider">|</span>
-        <a href="mailto:feon.5upport@ya.ru" class="footer-link">📧 support:feon.5upport@ya.ru</a>
+        <a href="mailto:feon.5upport@ya.ru">📧 support:feon.5upport@ya.ru</a>
     </footer>
 
     <script>
-        // Проверка статуса соединения
-        async function checkStatus() {
-            const statusIndicator = document.getElementById('statusIndicator');
-            const statusText = document.getElementById('statusText');
-            const hintText = document.getElementById('hintText');
-            const vkButton = document.getElementById('vkButton');
-            const loaderOverlay = document.getElementById('loaderOverlay');
+        // ==========================================
+        // НАСТРОЙКИ СЕРВЕРА ЧАТА
+        // ==========================================
+        // Замените на реальный URL вашего чат-сервера
+        const CHAT_SERVER_URL = 'https://docker-new-chat.onrender.com'; // Тестовый URL (замените на свой)
+        
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY = 2000;
+        const PING_TIMEOUT = 5000;
+        
+        let currentRetry = 0;
+        let pingValue = 0;
 
+        // Функция измерения пинга сервера
+        async function pingServer() {
+            const startTime = performance.now();
+            
             try {
-                // Имитация проверки соединения
-                await new Promise(resolve => setTimeout(resolve, 1500));
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), PING_TIMEOUT);
 
-                // Проверяем доступность VK группы
-                const vkUrl = 'https://vk.com/club136655585';
-                
-                // Простая проверка доступности
-                const checkVK = await fetch(vkUrl, { 
+                // Делаем запрос к серверу
+                await fetch(CHAT_SERVER_URL, { 
                     method: 'HEAD',
-                    mode: 'no-cors'
-                }).then(() => true).catch(() => false);
-
-                if (checkVK) {
-                    // Онлайн
-                    statusIndicator.className = 'status-indicator online';
-                    statusText.className = 'status-text online-text';
-                    statusText.textContent = 'Феон на связи';
-                    hintText.classList.remove('hidden');
-                    vkButton.classList.remove('hidden');
-                } else {
-                    // Офлайн
-                    statusIndicator.className = 'status-indicator offline';
-                    statusText.className = 'status-text offline-text';
-                    statusText.textContent = 'Временно недоступен';
-                }
-
+                    signal: controller.signal,
+                    mode: 'no-cors',
+                    cache: 'no-cache'
+                });
+                
+                clearTimeout(timeoutId);
+                const endTime = performance.now();
+                
+                // Вычисляем пинг в миллисекундах
+                pingValue = Math.round(endTime - startTime);
+                return { success: true, ping: pingValue };
+                
             } catch (error) {
-                console.error('Ошибка проверки статуса:', error);
-                statusIndicator.className = 'status-indicator offline';
-                statusText.className = 'status-text offline-text';
-                statusText.textContent = 'Ошибка соединения';
-            } finally {
-                // Скрываем загрузчик
-                setTimeout(() => {
-                    loaderOverlay.style.opacity = '0';
-                    setTimeout(() => {
-                        loaderOverlay.classList.add('hidden');
-                    }, 300);
-                }, 500);
+                const endTime = performance.now();
+                pingValue = Math.round(endTime - startTime);
+                return { success: false, ping: pingValue, error: error.message };
             }
         }
 
-        // Запускаем проверку при загрузке страницы
-        window.addEventListener('load', checkStatus);
+        // Основная функция проверки соединения
+        async function checkServerConnection() {
+            const statusIndicator = document.getElementById('statusIndicator');
+            const statusText = document.getElementById('statusText');
+            const pingInfo = document.getElementById('pingInfo');
+            const hintText = document.getElementById('hintText');
+            const vkButton = document.getElementById('vkButton');
+            const chatWidget = document.getElementById('chatWidget');
+            const loader = document.getElementById('loaderOverlay');
 
-        // Перепроверка каждые 30 секунд
-        setInterval(checkStatus, 30000);
+            vkButton.classList.add('hidden');
+            chatWidget.classList.add('hidden');
+            
+            if (currentRetry === 0) {
+                statusText.textContent = 'Проверка соединения...';
+            } else {
+                statusText.textContent = `Попытка ${currentRetry}/${MAX_RETRIES}...`;
+            }
+            
+            statusIndicator.className = 'status-indicator loading';
+            statusText.className = 'status-text loading-text';
+            pingInfo.textContent = 'Пинг: ... мс';
+
+            // Выполняем пинг сервера
+            const result = await pingServer();
+
+            if (result.success) {
+                // === УСПЕХ: Сервер доступен ===
+                statusIndicator.className = 'status-indicator online';
+                statusText.className = 'status-text online-text';
+                statusText.textContent = 'Феон на связи';
+                pingInfo.textContent = `Пинг: ${result.ping} мс`;
+                pingInfo.style.color = 'rgba(76, 175, 80, 0.8)';
+                
+                hintText.classList.remove('hidden');
+                
+                // Показываем виджет чата ТОЛЬКО после успешного соединения
+                setTimeout(() => {
+                    chatWidget.classList.remove('hidden');
+                }, 500);
+                
+                hideLoader(loader);
+
+            } else {
+                // === НЕУДАЧА ===
+                currentRetry++;
+                pingInfo.textContent = `Пинг: ${result.ping} мс (таймаут)`;
+                pingInfo.style.color = 'rgba(244, 67, 54, 0.8)';
+                
+                if (currentRetry < MAX_RETRIES) {
+                    // Пробуем еще раз
+                    setTimeout(checkServerConnection, RETRY_DELAY);
+                } else {
+                    // Все попытки исчерпаны
+                    statusIndicator.className = 'status-indicator offline';
+                    statusText.className = 'status-text offline-text';
+                    statusText.textContent = 'Сервер недоступен';
+                    
+                    hintText.classList.add('hidden');
+                    
+                    // Показываем кнопку ВК как альтернативу
+                    vkButton.classList.remove('hidden');
+                    
+                    hideLoader(loader);
+                }
+            }
+        }
+
+        function hideLoader(loader) {
+            setTimeout(() => {
+                loader.style.opacity = '0';
+                setTimeout(() => {
+                    loader.classList.add('hidden');
+                }, 400);
+            }, 600);
+        }
+
+        // Запуск проверки при загрузке страницы
+        window.addEventListener('DOMContentLoaded', checkServerConnection);
+
+        // Обработчик клика на виджет чата
+        document.getElementById('chatWidget').addEventListener('click', function() {
+            // Здесь добавьте код открытия вашего чата
+            // Например: JivoAPI.open(); или показ iframe
+            console.log('Открытие чата...');
+            alert('Здесь откроется ваш виджет чата');
+        });
+
+        // Периодическая перепроверка каждые 60 секунд
+        setInterval(() => {
+            currentRetry = 0;
+            checkServerConnection();
+        }, 60000);
     </script>
 </body>
 </html>
