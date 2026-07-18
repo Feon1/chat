@@ -152,6 +152,39 @@ def get_history(user_id: str, limit: int = 50) -> list[dict]:
         print(f"⚠️ Ошибка получения истории: {e}")
         return []
 
+@app.get("/get_all_users")
+async def get_all_users():
+    """Возвращает список всех пользователей и количество их сообщений"""
+    try:
+        # Получаем все точки из коллекции истории
+        records, next_page = qdrant.scroll(
+            collection_name=HISTORY_COLLECTION,
+            limit=1000,  # Максимум за раз
+            with_payload=True
+        )
+        
+        # Группируем по user_id
+        users = {}
+        for r in records:
+            if r.payload:
+                uid = r.payload.get("user_id", "unknown")
+                if uid not in users:
+                    users[uid] = {
+                        "user_id": uid,
+                        "message_count": 0,
+                        "last_activity": r.payload.get("timestamp", "")
+                    }
+                users[uid]["message_count"] += 1
+                # Обновляем последнее время активности
+                if r.payload.get("timestamp", "") > users[uid]["last_activity"]:
+                    users[uid]["last_activity"] = r.payload.get("timestamp", "")
+        
+        # Сортируем по последней активности
+        sorted_users = sorted(users.values(), key=lambda x: x["last_activity"], reverse=True)
+        
+        return JSONResponse({"users": sorted_users, "total": len(sorted_users)})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 # ==========================================
 # ЭНДПОИНТЫ
 # ==========================================
