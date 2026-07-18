@@ -11,3 +11,4 @@ qdrant-client==1.9.1
 python-multipart
 pypdf
 python-docx
+supabase
