@@ -308,39 +308,57 @@
         </div>
     </div>
 
-    <script>
-        // Простая защита паролем
-const ADMIN_PASSWORD = 'ваш_секретный_пароль';
-const input = prompt('Введите пароль администратора:');
-if (input !== ADMIN_PASSWORD) {
-    document.body.innerHTML = '<h1 style="text-align:center;margin-top:50px;">Доступ запрещен</h1>';
-    throw new Error('Unauthorized');
-}
-        const API_BASE = 'https://docker-new-chat.onrender.com';
-        let allUsers = [];
-        let currentUser = null;
+  <script>
+    const API_BASE = 'https://docker-new-chat.onrender.com';
+    let allUsers = [];
+    let currentUser = null;
 
-        // Загрузка списка пользователей
-        async function loadUsers() {
-            try {
-                const response = await fetch(`${API_BASE}/get_all_users`);
-                const data = await response.json();
-                
-                if (data.users) {
-                    allUsers = data.users;
-                    document.getElementById('totalUsers').textContent = data.total;
-                    
-                    // Подсчитываем общее количество сообщений
-                    const totalMsgs = data.users.reduce((sum, u) => sum + u.message_count, 0);
-                    document.getElementById('totalMessages').textContent = totalMsgs;
-                    
-                    renderUsers(allUsers);
-                }
-            } catch (error) {
-                console.error('Ошибка загрузки пользователей:', error);
-                document.getElementById('usersList').innerHTML = '<div class="loading">Ошибка загрузки</div>';
-            }
+    // 1. ПРАВИЛЬНАЯ ПРОВЕРКА ТОКЕНА
+    let adminToken = sessionStorage.getItem('admin_token');
+    
+    if (!adminToken) {
+        adminToken = prompt('Введите токен администратора:');
+        if (!adminToken) {
+            document.body.innerHTML = '<h1 style="text-align:center;margin-top:50px; color: #e74c3c;">Доступ запрещен: токен не введен</h1>';
+            throw new Error('Unauthorized');
         }
+        // Сохраняем в sessionStorage (исчезнет при закрытии вкладки, это безопасно)
+        sessionStorage.setItem('admin_token', adminToken);
+    }
+
+    // 2. Загрузка списка пользователей с отправкой токена в заголовке
+    async function loadUsers() {
+        try {
+            const response = await fetch(`${API_BASE}/get_all_users`, {
+                headers: {
+                    'x-admin-token': adminToken // <-- ОТПРАВЛЯЕМ ТОКЕН НА СЕРВЕР
+                }
+            });
+
+            // Если сервер отверг токен (ошибка 401)
+            if (response.status === 401) {
+                alert('Неверный токен администратора!');
+                sessionStorage.removeItem('admin_token');
+                location.reload(); // Перезагружаем страницу, чтобы спросить снова
+                return;
+            }
+
+            const data = await response.json();
+            
+            if (data.users) {
+                allUsers = data.users;
+                document.getElementById('totalUsers').textContent = data.total;
+                const totalMsgs = data.users.reduce((sum, u) => sum + u.message_count, 0);
+                document.getElementById('totalMessages').textContent = totalMsgs;
+                renderUsers(allUsers);
+            }
+        } catch (error) {
+            console.error('Ошибка загрузки пользователей:', error);
+            document.getElementById('usersList').innerHTML = '<div class="loading">Ошибка загрузки</div>';
+        }
+    }
+
+    // ... (далее идет ваш старый код функций renderUsers, selectUser, renderMessages и т.д. без изменений) ...
 
         // Отрисовка списка пользователей
         function renderUsers(users) {
