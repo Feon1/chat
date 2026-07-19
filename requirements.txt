@@ -12,3 +12,4 @@ python-multipart
 pypdf
 python-docx
 supabase
+httpx>=0.24.0
