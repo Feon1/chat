@@ -74,24 +74,19 @@
         .logout-btn:hover { background: var(--danger); color: white; }
 
         /* === ВКЛАДКИ === */
-        .tabs {
-            display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid var(--border);
-        }
+        .tabs { display: flex; gap: 10px; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
         .tab {
             padding: 12px 24px; background: transparent; border: none;
             color: var(--text-muted); cursor: pointer; font-size: 15px; font-weight: 600;
             border-bottom: 3px solid transparent; transition: all 0.2s;
         }
         .tab:hover { color: var(--text-main); }
-        .tab.active {
-            color: var(--accent); border-bottom-color: var(--accent);
-        }
-
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
 
-        /* === ВКЛАДКА: ИСТОРИЯ ЧАТОВ === */
-        .dashboard { display: grid; grid-template-columns: 350px 1fr; gap: 20px; height: calc(100vh - 240px); }
+        /* === ОБЩИЕ СТИЛИ ПАНЕЛЕЙ === */
+        .dashboard, .knowledge-dashboard { display: grid; grid-template-columns: 350px 1fr; gap: 20px; height: calc(100vh - 240px); }
         .panel {
             background: var(--bg-card); border-radius: 16px; border: 1px solid var(--border);
             display: flex; flex-direction: column; overflow: hidden;
@@ -101,50 +96,61 @@
             font-weight: 600; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;
         }
         .user-list, .knowledge-list { flex: 1; overflow-y: auto; }
-        .user-item, .knowledge-item {
+        
+        /* === ЭЛЕМЕНТЫ СПИСКОВ === */
+        .user-item, .file-item {
             padding: 15px 20px; border-bottom: 1px solid var(--border); cursor: pointer;
             display: flex; justify-content: space-between; align-items: center;
         }
-        .user-item:hover, .knowledge-item:hover { background: rgba(102, 126, 234, 0.1); }
+        .user-item:hover, .file-item:hover { background: rgba(102, 126, 234, 0.1); }
         .user-item.active { background: rgba(102, 126, 234, 0.2); border-left: 3px solid var(--accent); }
-        .user-id { font-weight: 600; font-size: 14px; }
-        .user-meta, .knowledge-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+        .file-item.active { background: rgba(46, 204, 113, 0.2); border-left: 3px solid var(--success); }
+        
+        .user-id, .file-name { font-weight: 600; font-size: 14px; }
+        .file-name { color: var(--success); }
+        .user-meta, .file-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
         .delete-btn { background: transparent; border: none; color: var(--danger); cursor: pointer; font-size: 18px; opacity: 0.7; }
         .delete-btn:hover { opacity: 1; }
 
+        /* === ЗОНА ЗАГРУЗКИ ФАЙЛОВ === */
+        .upload-zone {
+            padding: 15px 20px; border-bottom: 1px solid var(--border);
+            display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+            background: rgba(102, 126, 234, 0.05);
+        }
+        .file-input-wrapper {
+            position: relative; overflow: hidden; display: inline-block; flex: 1;
+        }
+        .file-input-wrapper input[type=file] {
+            font-size: 14px; color: var(--text-muted); width: 100%;
+        }
+        .upload-btn {
+            padding: 10px 20px; background: var(--success); color: white;
+            border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+        }
+        .upload-btn:hover { background: #27ae60; }
+        .upload-btn:disabled { background: var(--text-muted); cursor: not-allowed; }
+        .upload-status { font-size: 13px; width: 100%; margin-top: 5px; }
+
+        /* === ПРОСМОТР === */
         .chat-view, .knowledge-view { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px; }
         .message { max-width: 80%; padding: 12px 16px; border-radius: 12px; font-size: 14px; line-height: 1.5; }
         .message.user { align-self: flex-end; background: var(--accent); color: white; border-bottom-right-radius: 4px; }
         .message.assistant { align-self: flex-start; background: var(--bg-input); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
         .message-time { font-size: 11px; opacity: 0.7; margin-top: 6px; text-align: right; }
-        .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-style: italic; }
-        .loading { text-align: center; padding: 20px; color: var(--text-muted); }
-
-        /* === ВКЛАДКА: БАЗА ЗНАНИЙ === */
-        .knowledge-dashboard { display: grid; grid-template-columns: 300px 1fr; gap: 20px; height: calc(100vh - 240px); }
         
-        .file-item {
-            padding: 15px 20px; border-bottom: 1px solid var(--border); cursor: pointer;
-            display: flex; justify-content: space-between; align-items: center;
-        }
-        .file-item:hover { background: rgba(46, 204, 113, 0.1); }
-        .file-item.active { background: rgba(46, 204, 113, 0.2); border-left: 3px solid var(--success); }
-        .file-name { font-weight: 600; font-size: 14px; color: var(--success); }
-        .file-meta { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
-
         .knowledge-text {
             background: var(--bg-input); padding: 20px; border-radius: 12px;
             border: 1px solid var(--border); font-size: 14px; line-height: 1.6;
             white-space: pre-wrap; word-break: break-word;
         }
-        .knowledge-header-info {
-            display: flex; gap: 15px; align-items: center; flex-wrap: wrap;
-        }
-        .badge {
-            padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
-        }
+        .knowledge-header-info { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; }
+        .badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
         .badge-file { background: rgba(46, 204, 113, 0.2); color: var(--success); }
         .badge-manual { background: rgba(243, 156, 18, 0.2); color: var(--warning); }
+
+        .empty-state { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-style: italic; }
+        .loading { text-align: center; padding: 20px; color: var(--text-muted); }
 
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: var(--bg-dark); }
@@ -217,6 +223,16 @@
                         <span>📁 Файлы</span>
                         <button onclick="loadKnowledge()" style="background:none; border:none; color:var(--accent); cursor:pointer; font-size:18px;">🔄</button>
                     </div>
+                    
+                    <!-- НОВАЯ ЗОНА ЗАГРУЗКИ -->
+                    <div class="upload-zone">
+                        <div class="file-input-wrapper">
+                            <input type="file" id="fileInput" accept=".pdf,.docx">
+                        </div>
+                        <button onclick="uploadFile()" id="uploadBtn" class="upload-btn">📤 Загрузить</button>
+                        <div id="uploadStatus" class="upload-status"></div>
+                    </div>
+
                     <div id="fileList" class="knowledge-list"><div class="loading">Загрузка...</div></div>
                 </div>
                 <div class="panel">
@@ -228,7 +244,7 @@
                         <button id="deleteFileBtn" onclick="deleteCurrentFile()" class="logout-btn" style="padding: 5px 10px; font-size: 12px; display: none;">🗑 Удалить файл</button>
                     </div>
                     <div id="knowledgeView" class="knowledge-view">
-                        <div class="empty-state">Выберите файл слева, чтобы увидеть его содержимое</div>
+                        <div class="empty-state">Выберите файл слева или загрузите новый</div>
                     </div>
                 </div>
             </div>
@@ -236,7 +252,11 @@
     </div>
 
     <script>
-        const API_BASE = 'https://docker-new-chat.onrender.com';
+        // Автоматически определяет URL сервера
+        const API_BASE = window.location.hostname.includes('github.io') 
+            ? 'https://docker-new-chat.onrender.com' 
+            : '';
+            
         let adminToken = '';
         let currentUserId = null;
         let currentFile = null;
@@ -396,6 +416,62 @@
                 `).join('');
             } catch (error) {
                 fileListEl.innerHTML = `<div class="loading" style="color: var(--danger)">Ошибка: ${error.message}</div>`;
+            }
+        }
+
+        // === НОВАЯ ФУНКЦИЯ ЗАГРУЗКИ ФАЙЛА ===
+        async function uploadFile() {
+            const fileInput = document.getElementById('fileInput');
+            const statusEl = document.getElementById('uploadStatus');
+            const uploadBtn = document.getElementById('uploadBtn');
+            const file = fileInput.files[0];
+
+            if (!file) {
+                statusEl.textContent = '❌ Выберите файл (PDF или DOCX)!';
+                statusEl.style.color = 'var(--danger)';
+                return;
+            }
+
+            if (!file.name.toLowerCase().endsWith('.pdf') && !file.name.toLowerCase().endsWith('.docx')) {
+                statusEl.textContent = '❌ Поддерживаются только форматы .pdf и .docx';
+                statusEl.style.color = 'var(--danger)';
+                return;
+            }
+
+            statusEl.textContent = `⏳ Загрузка и обработка "${file.name}"... Это может занять время.`;
+            statusEl.style.color = 'var(--warning)';
+            uploadBtn.disabled = true;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(`${API_BASE}/upload_document`, {
+                    method: 'POST',
+                    headers: {
+                        'x-admin-token': adminToken
+                        // Важно: не указывайте 'Content-Type': 'multipart/form-data' вручную, 
+                        // браузер сделает это автоматически с правильным boundary
+                    },
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    statusEl.textContent = `✅ Успех: ${result.message}`;
+                    statusEl.style.color = 'var(--success)';
+                    fileInput.value = ''; // Очистить поле выбора файла
+                    loadKnowledge(); // Обновить список файлов
+                } else {
+                    statusEl.textContent = `❌ Ошибка сервера: ${result.error}`;
+                    statusEl.style.color = 'var(--danger)';
+                }
+            } catch (error) {
+                statusEl.textContent = `❌ Ошибка сети: ${error.message}`;
+                statusEl.style.color = 'var(--danger)';
+            } finally {
+                uploadBtn.disabled = false;
             }
         }
 
