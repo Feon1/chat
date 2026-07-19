@@ -3,40 +3,146 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Админ-панель | История чатов</title>
+    <title>Феон | Админ-панель</title>
     <style>
+        :root {
+            --bg-dark: #1a1a2e;
+            --bg-card: #16213e;
+            --bg-input: #0f3460;
+            --accent: #667eea;
+            --accent-hover: #764ba2;
+            --text-main: #eaeaea;
+            --text-muted: #8892b0;
+            --danger: #e74c3c;
+            --success: #2ecc71;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            font-family: 'Nunito', 'Segoe UI', sans-serif;
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #1a1a2e;
-            color: #eee;
+            background-color: var(--bg-dark);
+            color: var(--text-main);
             min-height: 100vh;
         }
 
+        /* === ЭКРАН ВХОДА === */
+        .login-screen {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .login-box {
+            background: var(--bg-card);
+            padding: 40px;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border);
+            text-align: center;
+        }
+
+        .login-box h2 {
+            color: var(--accent);
+            margin-bottom: 25px;
+            font-size: 24px;
+        }
+
+        .login-input {
+            width: 100%;
+            padding: 14px;
+            background: var(--bg-input);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-main);
+            font-size: 15px;
+            margin-bottom: 15px;
+            transition: border-color 0.3s;
+        }
+
+        .login-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
+
+        .remember-me {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 14px;
+            justify-content: center;
+        }
+
+        .remember-me input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            accent-color: var(--accent);
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .login-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .login-error {
+            color: var(--danger);
+            margin-top: 15px;
+            font-size: 14px;
+            display: none;
+        }
+
+        /* === ОСНОВНОЙ ИНТЕРФЕЙС === */
         .admin-container {
-            max-width: 1400px;
+            display: none; /* Скрыто до авторизации */
+            max-width: 1200px;
             margin: 0 auto;
             padding: 20px;
         }
 
         .header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+            gap: 20px;
         }
 
         .header h1 {
             font-size: 24px;
-            font-weight: 600;
+            color: var(--text-main);
         }
 
         .stats {
@@ -45,229 +151,229 @@
         }
 
         .stat-box {
-            background: rgba(255,255,255,0.1);
-            padding: 10px 20px;
-            border-radius: 8px;
+            background: var(--bg-card);
+            padding: 15px 25px;
+            border-radius: 12px;
+            border: 1px solid var(--border);
             text-align: center;
         }
 
         .stat-box .number {
             font-size: 24px;
-            font-weight: bold;
+            font-weight: 700;
+            color: var(--accent);
         }
 
         .stat-box .label {
             font-size: 12px;
-            opacity: 0.8;
+            color: var(--text-muted);
+            margin-top: 4px;
         }
 
-        .main-layout {
+        .logout-btn {
+            background: rgba(231, 76, 60, 0.15);
+            color: var(--danger);
+            border: 1px solid rgba(231, 76, 60, 0.3);
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .logout-btn:hover {
+            background: var(--danger);
+            color: white;
+        }
+
+        /* === ПАНЕЛЬ УПРАВЛЕНИЯ === */
+        .dashboard {
             display: grid;
             grid-template-columns: 350px 1fr;
             gap: 20px;
-            height: calc(100vh - 140px);
+            height: calc(100vh - 180px);
         }
 
-        /* Панель пользователей */
-        .users-panel {
-            background: #16213e;
-            border-radius: 12px;
-            padding: 20px;
-            overflow-y: auto;
-        }
-
-        .users-panel h2 {
-            font-size: 18px;
-            margin-bottom: 15px;
-            color: #667eea;
-        }
-
-        .search-box {
-            width: 100%;
-            padding: 10px;
-            background: #0f3460;
-            border: 1px solid #667eea;
-            border-radius: 8px;
-            color: #eee;
-            margin-bottom: 15px;
-            font-size: 14px;
-        }
-
-        .search-box::placeholder {
-            color: #888;
-        }
-
-        .user-item {
-            background: #0f3460;
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            cursor: pointer;
-            transition: all 0.2s;
-            border-left: 3px solid transparent;
-        }
-
-        .user-item:hover {
-            background: #1a4a7a;
-            border-left-color: #667eea;
-        }
-
-        .user-item.active {
-            background: #1a4a7a;
-            border-left-color: #667eea;
-        }
-
-        .user-id {
-            font-size: 13px;
-            font-weight: 600;
-            color: #667eea;
-            margin-bottom: 5px;
-            word-break: break-all;
-        }
-
-        .user-meta {
-            display: flex;
-            justify-content: space-between;
-            font-size: 11px;
-            color: #888;
-        }
-
-        /* Панель чата */
-        .chat-panel {
-            background: #16213e;
-            border-radius: 12px;
+        .panel {
+            background: var(--bg-card);
+            border-radius: 16px;
+            border: 1px solid var(--border);
             display: flex;
             flex-direction: column;
             overflow: hidden;
         }
 
-        .chat-header {
-            background: #0f3460;
+        .panel-header {
             padding: 15px 20px;
-            border-bottom: 1px solid #1a4a7a;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            color: var(--text-muted);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
-        .chat-header h3 {
-            font-size: 16px;
-            color: #667eea;
-        }
-
-        .chat-header .subtitle {
-            font-size: 12px;
-            color: #888;
-            margin-top: 5px;
-        }
-
-        .messages-container {
+        .user-list {
             flex: 1;
             overflow-y: auto;
-            padding: 20px;
         }
 
-        .empty-state {
-            text-align: center;
-            padding: 40px;
-            color: #888;
+        .user-item {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
 
-        .empty-state .icon {
-            font-size: 48px;
-            margin-bottom: 10px;
+        .user-item:hover {
+            background: rgba(102, 126, 234, 0.1);
         }
 
-        .message {
-            margin-bottom: 15px;
+        .user-item.active {
+            background: rgba(102, 126, 234, 0.2);
+            border-left: 3px solid var(--accent);
+        }
+
+        .user-info {
             display: flex;
             flex-direction: column;
         }
 
-        .message.user {
-            align-items: flex-end;
+        .user-id {
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--text-main);
         }
 
-        .message.bot {
-            align-items: flex-start;
+        .user-meta {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
         }
 
-        .message-content {
-            max-width: 70%;
+        .delete-user-btn {
+            background: transparent;
+            border: none;
+            color: var(--danger);
+            cursor: pointer;
+            padding: 5px;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+
+        .delete-user-btn:hover {
+            opacity: 1;
+        }
+
+        .chat-view {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            max-width: 80%;
             padding: 12px 16px;
             border-radius: 12px;
             font-size: 14px;
             line-height: 1.5;
+            position: relative;
         }
 
-        .message.user .message-content {
-            background: #667eea;
+        .message.user {
+            align-self: flex-end;
+            background: var(--accent);
             color: white;
             border-bottom-right-radius: 4px;
         }
 
-        .message.bot .message-content {
-            background: #0f3460;
-            color: #eee;
+        .message.assistant {
+            align-self: flex-start;
+            background: var(--bg-input);
+            color: var(--text-main);
             border-bottom-left-radius: 4px;
+            border: 1px solid var(--border);
         }
 
         .message-time {
             font-size: 11px;
-            color: #888;
-            margin-top: 5px;
+            opacity: 0.7;
+            margin-top: 6px;
+            text-align: right;
+        }
+
+        .empty-state {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            font-style: italic;
         }
 
         .loading {
             text-align: center;
             padding: 20px;
-            color: #888;
-        }
-
-        .refresh-btn {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background 0.2s;
-        }
-
-        .refresh-btn:hover {
-            background: #5568d3;
+            color: var(--text-muted);
         }
 
         /* Скроллбар */
         ::-webkit-scrollbar {
             width: 8px;
         }
-
         ::-webkit-scrollbar-track {
-            background: #1a1a2e;
+            background: var(--bg-dark);
         }
-
         ::-webkit-scrollbar-thumb {
-            background: #667eea;
+            background: var(--bg-input);
             border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--accent);
         }
 
         @media (max-width: 768px) {
-            .main-layout {
+            .dashboard {
                 grid-template-columns: 1fr;
                 height: auto;
             }
-
-            .users-panel {
-                max-height: 300px;
+            .panel {
+                height: 50vh;
             }
-
-            .chat-panel {
-                height: 500px;
+            .header {
+                flex-direction: column;
+                align-items: flex-start;
             }
         }
     </style>
 </head>
 <body>
-    <div class="admin-container">
+
+    <!-- ЭКРАН ВХОДА -->
+    <div id="loginScreen" class="login-screen">
+        <div class="login-box">
+            <h2>🔐 Вход в админ-панель</h2>
+            <input type="password" id="tokenInput" class="login-input" placeholder="Введите ADMIN_TOKEN" onkeypress="if(event.key==='Enter') login()">
+            
+            <label class="remember-me">
+                <input type="checkbox" id="rememberMe" checked>
+                Запомнить меня на этом устройстве
+            </label>
+            
+            <button onclick="login()" class="login-btn">Войти</button>
+            <div id="loginError" class="login-error">❌ Неверный токен или ошибка соединения</div>
+        </div>
+    </div>
+
+    <!-- ОСНОВНОЙ ИНТЕРФЕЙС -->
+    <div id="adminPanel" class="admin-container">
         <div class="header">
             <h1>🔐 Админ-панель | История чатов</h1>
             <div class="stats">
@@ -280,198 +386,252 @@
                     <div class="label">Сообщений</div>
                 </div>
             </div>
+            <button onclick="logout()" class="logout-btn">🚪 Выйти</button>
         </div>
 
-        <div class="main-layout">
-            <!-- Панель пользователей -->
-            <div class="users-panel">
-                <h2>👥 Пользователи</h2>
-                <input type="text" class="search-box" id="searchBox" placeholder="Поиск по user_id...">
-                <div id="usersList">
+        <div class="dashboard">
+            <!-- Список пользователей -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span>Пользователи</span>
+                    <button onclick="loadUsers()" style="background:none; border:none; color:var(--accent); cursor:pointer;">🔄</button>
+                </div>
+                <div id="userList" class="user-list">
                     <div class="loading">Загрузка...</div>
                 </div>
             </div>
 
-            <!-- Панель чата -->
-            <div class="chat-panel">
-                <div class="chat-header">
-                    <h3 id="chatTitle">Выберите пользователя</h3>
-                    <div class="subtitle" id="chatSubtitle">Нажмите на пользователя слева, чтобы увидеть историю</div>
+            <!-- Просмотр чата -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span id="chatHeaderTitle">Выберите пользователя</span>
+                    <button id="deleteChatBtn" onclick="deleteCurrentUser()" class="logout-btn" style="padding: 5px 10px; font-size: 12px; display: none;">🗑 Удалить чат</button>
                 </div>
-                <div class="messages-container" id="messagesContainer">
-                    <div class="empty-state">
-                        <div class="icon">💬</div>
-                        <p>История чатов пуста</p>
-                    </div>
+                <div id="chatView" class="chat-view">
+                    <div class="empty-state">Выберите пользователя слева, чтобы увидеть историю переписки</div>
                 </div>
             </div>
         </div>
     </div>
 
-  <script>
-    const API_BASE = 'https://docker-new-chat.onrender.com';
-    let allUsers = [];
-    let currentUser = null;
+    <script>
+        // Настройки API (оставьте пустым, если фронтенд и бэкенд на одном домене)
+        const API_BASE = ''; 
+        
+        let adminToken = '';
+        let currentUserId = null;
 
-    // 1. ПРАВИЛЬНАЯ ПРОВЕРКА ТОКЕНА
-    let adminToken = sessionStorage.getItem('admin_token');
-    
-    if (!adminToken) {
-        adminToken = prompt('Введите токен администратора:');
-        if (!adminToken) {
-            document.body.innerHTML = '<h1 style="text-align:center;margin-top:50px; color: #e74c3c;">Доступ запрещен: токен не введен</h1>';
-            throw new Error('Unauthorized');
-        }
-        // Сохраняем в sessionStorage (исчезнет при закрытии вкладки, это безопасно)
-        sessionStorage.setItem('admin_token', adminToken);
-    }
-
-    // 2. Загрузка списка пользователей с отправкой токена в заголовке
-    async function loadUsers() {
-        try {
-            const response = await fetch(`${API_BASE}/get_all_users`, {
-                headers: {
-                    'x-admin-token': adminToken // <-- ОТПРАВЛЯЕМ ТОКЕН НА СЕРВЕР
-                }
-            });
-
-            // Если сервер отверг токен (ошибка 401)
-            if (response.status === 401) {
-                alert('Неверный токен администратора!');
-                sessionStorage.removeItem('admin_token');
-                location.reload(); // Перезагружаем страницу, чтобы спросить снова
-                return;
+        // 1. ПРОВЕРКА ПРИ ЗАГРУЗКЕ
+        document.addEventListener('DOMContentLoaded', () => {
+            const savedToken = localStorage.getItem('feon_admin_token') || sessionStorage.getItem('feon_admin_token');
+            if (savedToken) {
+                adminToken = savedToken;
+                showAdminPanel();
             }
-
-            const data = await response.json();
-            
-            if (data.users) {
-                allUsers = data.users;
-                document.getElementById('totalUsers').textContent = data.total;
-                const totalMsgs = data.users.reduce((sum, u) => sum + u.message_count, 0);
-                document.getElementById('totalMessages').textContent = totalMsgs;
-                renderUsers(allUsers);
-            }
-        } catch (error) {
-            console.error('Ошибка загрузки пользователей:', error);
-            document.getElementById('usersList').innerHTML = '<div class="loading">Ошибка загрузки</div>';
-        }
-    }
-
-    // ... (далее идет ваш старый код функций renderUsers, selectUser, renderMessages и т.д. без изменений) ...
-
-        // Отрисовка списка пользователей
-        function renderUsers(users) {
-            const container = document.getElementById('usersList');
-            
-            if (users.length === 0) {
-                container.innerHTML = '<div class="empty-state"><p>Пользователи не найдены</p></div>';
-                return;
-            }
-
-            container.innerHTML = users.map(user => `
-                <div class="user-item ${currentUser === user.user_id ? 'active' : ''}" 
-                     onclick="selectUser('${user.user_id}')">
-                    <div class="user-id">${user.user_id}</div>
-                    <div class="user-meta">
-                        <span>💬 ${user.message_count} сообщ.</span>
-                        <span>${formatDate(user.last_activity)}</span>
-                    </div>
-                </div>
-            `).join('');
-        }
-
-        // Выбор пользователя
-        async function selectUser(userId) {
-            currentUser = userId;
-            document.getElementById('chatTitle').textContent = `Чат: ${userId}`;
-            document.getElementById('chatSubtitle').textContent = 'Загрузка истории...';
-            
-            // Обновляем активный элемент
-            document.querySelectorAll('.user-item').forEach(item => {
-                item.classList.remove('active');
-            });
-            event.currentTarget.classList.add('active');
-
-            try {
-                const response = await fetch(`${API_BASE}/get_history?user_id=${userId}`);
-                const data = await response.json();
-                
-                if (data.messages) {
-                    renderMessages(data.messages);
-                    document.getElementById('chatSubtitle').textContent = 
-                        `${data.messages.length} сообщений в истории`;
-                } else {
-                    document.getElementById('messagesContainer').innerHTML = 
-                        '<div class="empty-state"><div class="icon">📭</div><p>История пуста</p></div>';
-                }
-            } catch (error) {
-                console.error('Ошибка загрузки истории:', error);
-                document.getElementById('messagesContainer').innerHTML = 
-                    '<div class="empty-state"><div class="icon">❌</div><p>Ошибка загрузки</p></div>';
-            }
-        }
-
-        // Отрисовка сообщений
-        function renderMessages(messages) {
-            const container = document.getElementById('messagesContainer');
-            
-            if (messages.length === 0) {
-                container.innerHTML = '<div class="empty-state"><div class="icon">📭</div><p>Нет сообщений</p></div>';
-                return;
-            }
-
-            container.innerHTML = messages.map(msg => {
-                const time = new Date(msg.timestamp).toLocaleString('ru-RU', {
-                    day: '2-digit',
-                    month: '2-digit',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-                
-                const role = msg.role === 'user' ? 'user' : 'bot';
-                const icon = msg.role === 'user' ? '👤' : '🤖';
-                
-                return `
-                    <div class="message ${role}">
-                        <div class="message-content">${msg.content.replace(/\n/g, '<br>')}</div>
-                        <div class="message-time">${icon} ${time}</div>
-                    </div>
-                `;
-            }).join('');
-
-            // Прокрутка вниз
-            container.scrollTop = container.scrollHeight;
-        }
-
-        // Форматирование даты
-        function formatDate(dateString) {
-            if (!dateString) return 'Неизвестно';
-            const date = new Date(dateString);
-            const now = new Date();
-            const diff = now - date;
-            
-            if (diff < 60000) return 'Только что';
-            if (diff < 3600000) return `${Math.floor(diff / 60000)} мин. назад`;
-            if (diff < 86400000) return `${Math.floor(diff / 3600000)} ч. назад`;
-            return date.toLocaleDateString('ru-RU');
-        }
-
-        // Поиск пользователей
-        document.getElementById('searchBox').addEventListener('input', (e) => {
-            const query = e.target.value.toLowerCase();
-            const filtered = allUsers.filter(u => 
-                u.user_id.toLowerCase().includes(query)
-            );
-            renderUsers(filtered);
         });
 
-        // Автообновление каждые 30 секунд
-        setInterval(loadUsers, 30000);
+        // 2. ФУНКЦИЯ ВХОДА
+        async function login() {
+            const token = document.getElementById('tokenInput').value.trim();
+            const remember = document.getElementById('rememberMe').checked;
+            const errorEl = document.getElementById('loginError');
+            
+            if (!token) {
+                errorEl.textContent = '❌ Введите токен!';
+                errorEl.style.display = 'block';
+                return;
+            }
+            
+            errorEl.style.display = 'none';
+            
+            try {
+                const response = await fetch(`${API_BASE}/get_all_users`, {
+                    headers: { 'x-admin-token': token }
+                });
+                
+                if (response.status === 401) {
+                    errorEl.textContent = '❌ Неверный токен!';
+                    errorEl.style.display = 'block';
+                    return;
+                }
+                
+                if (!response.ok) throw new Error('Server error');
+                
+                // Успех
+                adminToken = token;
+                if (remember) {
+                    localStorage.setItem('feon_admin_token', token);
+                } else {
+                    sessionStorage.setItem('feon_admin_token', token);
+                }
+                
+                showAdminPanel();
+            } catch (error) {
+                errorEl.textContent = '❌ Ошибка соединения с сервером';
+                errorEl.style.display = 'block';
+            }
+        }
 
-        // Загрузка при старте
-        loadUsers();
+        // 3. ОТОБРАЖЕНИЕ ПАНЕЛИ
+        function showAdminPanel() {
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('adminPanel').style.display = 'block';
+            loadUsers();
+        }
+
+        // 4. ФУНКЦИЯ ВЫХОДА
+        function logout() {
+            if (confirm('Вы уверены, что хотите выйти?')) {
+                localStorage.removeItem('feon_admin_token');
+                sessionStorage.removeItem('feon_admin_token');
+                adminToken = '';
+                location.reload();
+            }
+        }
+
+        // 5. ЗАГРУЗКА СПИСКА ПОЛЬЗОВАТЕЛЕЙ
+        async function loadUsers() {
+            const userListEl = document.getElementById('userList');
+            userListEl.innerHTML = '<div class="loading">Загрузка...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/get_all_users`, {
+                    headers: { 'x-admin-token': adminToken }
+                });
+                
+                if (response.status === 401) {
+                    alert('Сессия истекла!');
+                    logout();
+                    return;
+                }
+                
+                const data = await response.json();
+                const users = data.users || [];
+                
+                // Обновляем статистику
+                document.getElementById('totalUsers').textContent = users.length;
+                let totalMsgs = users.reduce((sum, u) => sum + (u.message_count || 0), 0);
+                document.getElementById('totalMessages').textContent = totalMsgs;
+                
+                // Рендерим список
+                if (users.length === 0) {
+                    userListEl.innerHTML = '<div class="empty-state">Нет пользователей</div>';
+                    return;
+                }
+                
+                userListEl.innerHTML = users.map(user => `
+                    <div class="user-item ${currentUserId === user.user_id ? 'active' : ''}" onclick="selectUser('${user.user_id}')">
+                        <div class="user-info">
+                            <div class="user-id">${escapeHtml(user.user_id)}</div>
+                            <div class="user-meta">${user.message_count || 0} сообщений • ${user.last_active ? new Date(user.last_active).toLocaleDateString() : 'Неактивен'}</div>
+                        </div>
+                        <button class="delete-user-btn" onclick="event.stopPropagation(); deleteUser('${user.user_id}')" title="Удалить пользователя">🗑</button>
+                    </div>
+                `).join('');
+                
+            } catch (error) {
+                userListEl.innerHTML = '<div class="loading" style="color: var(--danger)">Ошибка загрузки</div>';
+            }
+        }
+
+        // 6. ВЫБОР ПОЛЬЗОВАТЕЛЯ И ЗАГРУЗКА ЧАТА
+        async function selectUser(userId) {
+            currentUserId = userId;
+            document.getElementById('chatHeaderTitle').textContent = `Чат: ${userId}`;
+            document.getElementById('deleteChatBtn').style.display = 'block';
+            
+            // Подсветка активного элемента
+            document.querySelectorAll('.user-item').forEach(el => el.classList.remove('active'));
+            // (Визуальное обновление произойдет при следующем рендере loadUsers, но можно и сразу)
+            
+            const chatViewEl = document.getElementById('chatView');
+            chatViewEl.innerHTML = '<div class="loading">Загрузка истории...</div>';
+            
+            try {
+                const response = await fetch(`${API_BASE}/get_user_history?user_id=${encodeURIComponent(userId)}`, {
+                    headers: { 'x-admin-token': adminToken }
+                });
+                
+                if (response.status === 401) {
+                    alert('Сессия истекла!');
+                    logout();
+                    return;
+                }
+                
+                const data = await response.json();
+                const messages = data.messages || [];
+                
+                if (messages.length === 0) {
+                    chatViewEl.innerHTML = '<div class="empty-state">История пуста</div>';
+                    return;
+                }
+                
+                chatViewEl.innerHTML = messages.map(msg => `
+                    <div class="message ${msg.role === 'user' ? 'user' : 'assistant'}">
+                        <div>${escapeHtml(msg.content).replace(/\n/g, '<br>')}</div>
+                        <div class="message-time">${msg.timestamp ? new Date(msg.timestamp).toLocaleString() : ''}</div>
+                    </div>
+                `).join('');
+                
+                // Прокрутка вниз
+                chatViewEl.scrollTop = chatViewEl.scrollHeight;
+                
+            } catch (error) {
+                chatViewEl.innerHTML = '<div class="loading" style="color: var(--danger)">Ошибка загрузки истории</div>';
+            }
+        }
+
+        // 7. УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ
+        async function deleteUser(userId) {
+            if (!confirm(`Удалить пользователя ${userId} и всю его историю?`)) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/delete_user?user_id=${encodeURIComponent(userId)}`, {
+                    method: 'DELETE',
+                    headers: { 'x-admin-token': adminToken }
+                });
+                
+                if (response.status === 401) {
+                    alert('Сессия истекла!');
+                    logout();
+                    return;
+                }
+                
+                if (response.ok) {
+                    if (currentUserId === userId) {
+                        currentUserId = null;
+                        document.getElementById('chatHeaderTitle').textContent = 'Выберите пользователя';
+                        document.getElementById('deleteChatBtn').style.display = 'none';
+                        document.getElementById('chatView').innerHTML = '<div class="empty-state">Выберите пользователя слева</div>';
+                    }
+                    loadUsers();
+                } else {
+                    alert('Ошибка при удалении');
+                }
+            } catch (error) {
+                alert('Ошибка соединения');
+            }
+        }
+
+        // 8. УДАЛЕНИЕ ТЕКУЩЕГО ВЫБРАННОГО ПОЛЬЗОВАТЕЛЯ (кнопка в шапке чата)
+        function deleteCurrentUser() {
+            if (currentUserId) {
+                deleteUser(currentUserId);
+            }
+        }
+
+        // Утилита для защиты от XSS
+        function escapeHtml(text) {
+            if (!text) return '';
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
     </script>
 </body>
 </html>
