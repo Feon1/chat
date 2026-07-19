@@ -2,9 +2,10 @@ import os
 import json
 import asyncio
 import uuid
+import random
 from datetime import datetime
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import httpx
@@ -15,7 +16,7 @@ load_dotenv()
 
 app = FastAPI(title="XiaoZhi RAG Adapter")
 
-# Разрешаем CORS (важно для работы с GitHub Pages и другими фронтендами)
+# Разрешаем CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,7 +30,11 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# Функция-зависимость для проверки админа
+# Переменные для ВКонтакте
+VK_GROUP_TOKEN = os.getenv("VK_GROUP_TOKEN")
+VK_GROUP_ID = os.getenv("VK_GROUP_ID")
+VK_CONFIRMATION_STRING = os.getenv("VK_CONFIRMATION_STRING", "ok")
+
 def verify_admin(request: Request):
     token = request.headers.get("x-admin-token")
     if not ADMIN_TOKEN or token != ADMIN_TOKEN:
@@ -74,7 +79,7 @@ async def startup_event():
         )
         print(f"✅ Коллекция '{HISTORY_COLLECTION}' создана")
 
-    # 3. 🚀 СОЗДАНИЕ ИНДЕКСА ДЛЯ user_id (КРИТИЧЕСКИ ВАЖНО!)
+    # 3. Создание индекса для user_id
     try:
         qdrant.create_payload_index(
             collection_name=HISTORY_COLLECTION,
@@ -85,7 +90,7 @@ async def startup_event():
     except Exception:
         print("ℹ️ Индекс для 'user_id' уже существует, пропускаем")
 
-    # 4. 🤖 АВТОМАТИЧЕСКАЯ УСТАНОВКА TELEGRAM WEBHOOK
+    # 4. Автоматическая установка TELEGRAM WEBHOOK
     if TELEGRAM_BOT_TOKEN and WEBHOOK_URL:
         set_webhook_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}"
         async with httpx.AsyncClient() as client:
@@ -95,14 +100,13 @@ async def startup_event():
             except Exception as e:
                 print(f"❌ Ошибка установки Telegram Webhook: {e}")
     else:
-        print("⚠️ Переменные TELEGRAM_BOT_TOKEN или WEBHOOK_URL не найдены. Вебхук не установлен.")
+        print("⚠️ Переменные TELEGRAM_BOT_TOKEN или WEBHOOK_URL не найдены.")
 
 
 # ==========================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
 async def get_embedding(text: str) -> list[float]:
-    """Получает вектор через Jina AI"""
     headers = {"Authorization": f"Bearer {JINA_API_KEY}", "Content-Type": "application/json"}
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -115,7 +119,6 @@ async def get_embedding(text: str) -> list[float]:
         return response.json()["data"][0]["embedding"]
 
 async def search_knowledge(query: str) -> str:
-    """Ищет контекст в базе знаний"""
     try:
         query_vector = await get_embedding(query)
         search_result = qdrant.search(
@@ -132,11 +135,9 @@ async def search_knowledge(query: str) -> str:
         return ""
 
 def save_to_history(user_id: str, role: str, content: str):
-    """Сохраняет сообщение в историю (Qdrant)"""
     try:
         message_id = str(uuid.uuid4())
         timestamp = datetime.utcnow().isoformat()
-
         qdrant.upsert(
             collection_name=HISTORY_COLLECTION,
             points=[
@@ -153,31 +154,20 @@ def save_to_history(user_id: str, role: str, content: str):
                 )
             ]
         )
-        print(f"✅ Сообщение сохранено в историю для {user_id}")
     except Exception as e:
         print(f"⚠️ Ошибка сохранения истории: {e}")
 
 def get_history(user_id: str, limit: int = 50) -> list[dict]:
-    """Получает историю сообщений пользователя"""
     try:
         records, next_page = qdrant.scroll(
             collection_name=HISTORY_COLLECTION,
             scroll_filter=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="user_id",
-                        match=models.MatchValue(value=user_id)
-                    )
-                ]
+                must=[models.FieldCondition(key="user_id", match=models.MatchValue(value=user_id))]
             ),
             limit=limit,
             with_payload=True
         )
-
-        messages = sorted(
-            [r.payload for r in records if r.payload],
-            key=lambda x: x.get("timestamp", "")
-        )
+        messages = sorted([r.payload for r in records if r.payload], key=lambda x: x.get("timestamp", ""))
         return messages
     except Exception as e:
         print(f"⚠️ Ошибка получения истории: {e}")
@@ -185,22 +175,14 @@ def get_history(user_id: str, limit: int = 50) -> list[dict]:
 
 
 # ==========================================
-# 🧠 УНИВЕРСАЛЬНОЕ ЯДРО ЧАТА (Telegram + Web)
+# 🧠 УНИВЕРСАЛЬНОЕ ЯДРО ЧАТА
 # ==========================================
 async def process_message_core(user_id: str, text: str) -> str:
-    """
-    Универсальная функция: сохраняет сообщение, берет историю, 
-    запрашивает ИИ с RAG и сохраняет ответ. Используется везде.
-    """
     if len(text) > 1000:
         return "Сообщение слишком длинное. Максимум 1000 символов."
 
     print(f"🧠 Запрос от {user_id}: '{text[:50]}...'")
-
-    # 1. Сохраняем сообщение пользователя в историю
     save_to_history(user_id, "user", text)
-
-    # 2. Получаем последние 6 сообщений для контекста
     history = get_history(user_id, limit=6)
 
     chat_history_str = ""
@@ -208,10 +190,7 @@ async def process_message_core(user_id: str, text: str) -> str:
         role = "Пользователь" if msg['role'] == 'user' else "Ассистент"
         chat_history_str += f"{role}: {msg['content']}\n"
 
-    # 3. Ищем дополнительный контекст в базе знаний
     context = await search_knowledge(text)
-
-    # 4. Формируем умный промпт
     prompt = ""
     if chat_history_str:
         prompt += f"История текущего диалога:\n{chat_history_str}\n\n"
@@ -220,24 +199,17 @@ async def process_message_core(user_id: str, text: str) -> str:
 
     prompt += f"Вопрос пользователя: {text}\n\nДай полезный, точный и развернутый ответ."
 
-    # 5. Вызываем LLM (DeepSeek через Polza.ai)
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.polza.ai/v1/chat/completions",
             headers={"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": "deepseek/deepseek-v4-flash",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.3
-            },
+            json={"model": "deepseek/deepseek-v4-flash", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3},
             timeout=30.0
         )
         response.raise_for_status()
         answer = response.json()["choices"][0]["message"]["content"]
 
-    # 6. Сохраняем ответ бота в историю
     save_to_history(user_id, "bot", answer)
-
     return answer
 
 
@@ -245,18 +217,10 @@ async def process_message_core(user_id: str, text: str) -> str:
 # 📱 TELEGRAM ИНТЕГРАЦИЯ
 # ==========================================
 async def send_telegram_message(chat_id: int, text: str):
-    """Отправляет сообщение пользователю в Telegram"""
     if not TELEGRAM_BOT_TOKEN:
-        print("❌ TELEGRAM_BOT_TOKEN не настроен!")
         return
-    
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
-    
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
     async with httpx.AsyncClient() as client:
         try:
             await client.post(url, json=payload)
@@ -265,37 +229,93 @@ async def send_telegram_message(chat_id: int, text: str):
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(update: dict):
-    """Принимает обновления от Telegram"""
     if "message" in update:
         message = update["message"]
         chat_id = message["chat"]["id"]
-        user_id = f"tg_{chat_id}"  # Уникальный ID для Qdrant (например, tg_123456789)
+        user_id = f"tg_{chat_id}"
         
-        # Игнорируем не-текстовые сообщения (фото, стикеры)
         if "text" not in message:
             return {"ok": True}
             
         text = message["text"].strip()
-        
-        # Обработка команды /start
         if text.lower() == "/start":
-            welcome_text = (
-                "👋 Привет! Я ИИ-ассистент **Феон**.\n\n"
-                "Я могу отвечать на вопросы, помогать с задачами и поддерживать диалог. "
-                "Просто напишите мне что-нибудь!"
-            )
-            await send_telegram_message(chat_id, welcome_text)
+            await send_telegram_message(chat_id, "👋 Привет! Я ИИ-ассистент **Феон**.\n\nЯ могу отвечать на вопросы и поддерживать диалог. Просто напишите мне что-нибудь!")
             return {"ok": True}
         
-        # Вызываем наше универсальное ядро чата
         try:
             response_text = await process_message_core(user_id, text)
             await send_telegram_message(chat_id, response_text)
         except Exception as e:
             print(f"❌ Ошибка обработки сообщения Telegram: {e}")
             await send_telegram_message(chat_id, "Извините, произошла ошибка при обработке вашего сообщения.")
-        
     return {"ok": True}
+
+
+# ==========================================
+# 💬 ВКОНТАКТЕ ИНТЕГРАЦИЯ
+# ==========================================
+async def send_vk_message(user_id: int, text: str):
+    """Отправляет сообщение пользователю в ВКонтакте"""
+    if not VK_GROUP_TOKEN:
+        print("❌ VK_GROUP_TOKEN не настроен!")
+        return
+    
+    url = "https://api.vk.com/method/messages.send"
+    params = {
+        "user_id": user_id,
+        "message": text,
+        "random_id": random.randint(1, 2147483647), # Обязательный параметр для VK API
+        "access_token": VK_GROUP_TOKEN,
+        "v": "5.199" # Актуальная версия API
+    }
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(url, data=params)
+            result = response.json()
+            if "error" in result:
+                print(f"❌ Ошибка VK API: {result['error']}")
+        except Exception as e:
+            print(f"❌ Ошибка отправки в VK: {e}")
+
+@app.post("/webhook/vk")
+async def vk_webhook(request: Request):
+    """Принимает Callback API события от ВКонтакте"""
+    try:
+        event = await request.json()
+    except Exception:
+        return PlainTextResponse("ok")
+
+    # 1. Подтверждение адреса сервера (требуется при настройке в группе ВК)
+    if event.get("type") == "confirmation":
+        return PlainTextResponse(VK_CONFIRMATION_STRING)
+
+    # 2. Обработка нового сообщения
+    if event.get("type") == "message_new":
+        obj = event.get("object", {})
+        message = obj.get("message", {})
+        
+        user_id = message.get("from_id")
+        text = message.get("text", "").strip()
+        
+        # Игнорируем пустые сообщения или сообщения не от пользователей (от_id > 0)
+        if not text or user_id <= 0:
+            return PlainTextResponse("ok")
+        
+        # Формируем уникальный ID для Qdrant (например, vk_12345678)
+        vk_user_id = f"vk_{user_id}"
+        
+        try:
+            # Вызываем наше универсальное ядро чата
+            response_text = await process_message_core(vk_user_id, text)
+            # Отправляем ответ пользователю в ВК
+            await send_vk_message(user_id, response_text)
+        except Exception as e:
+            print(f"❌ Ошибка обработки сообщения VK: {e}")
+            await send_vk_message(user_id, "Извините, произошла ошибка при обработке вашего сообщения.")
+            
+    # Всегда возвращаем "ok" ВКонтакте, чтобы они не считали запрос неудачным
+    return PlainTextResponse("ok")
 
 
 # ==========================================
@@ -303,12 +323,10 @@ async def telegram_webhook(update: dict):
 # ==========================================
 @app.get("/")
 def read_root():
-    """Проверка работоспособности"""
     return {"status": "running", "message": "XiaoZhi RAG Adapter работает!"}
 
 @app.post("/add_knowledge")
 async def add_knowledge(request: Request):
-    """Добавляет текст в базу знаний"""
     try:
         body = await request.json()
         text = body.get("text", "")
@@ -330,7 +348,6 @@ async def add_knowledge(request: Request):
 
 @app.post("/upload_document")
 async def upload_document(file: UploadFile = File(...)):
-    """Загружает PDF/DOCX в базу знаний"""
     try:
         import io
         from pypdf import PdfReader
@@ -385,34 +402,26 @@ async def upload_document(file: UploadFile = File(...)):
             except Exception as e:
                 print(f"⚠️ Пропуск фрагмента {i}: {e}")
 
-        return JSONResponse({
-            "status": "success",
-            "message": f"Добавлено {success_count} из {len(chunks)} фрагментов"
-        })
+        return JSONResponse({"status": "success", "message": f"Добавлено {success_count} из {len(chunks)} фрагментов"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/query")
 async def handle_query(request: Request):
-    """Обработка запроса от веб-чата через универсальное ядро"""
     try:
         body = await request.json()
         text = body.get("text", "")
         user_id = body.get("user_id", "anonymous")
-
         if not text:
             return JSONResponse({"error": "Текст пуст"}, status_code=400)
-
         answer = await process_message_core(user_id, text)
         return JSONResponse({"answer": answer, "source": "rag_llm"})
-
     except Exception as e:
         print(f"❌ Ошибка в /query: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/get_history")
 async def get_history_endpoint(user_id: str):
-    """Возвращает историю пользователя"""
     try:
         messages = get_history(user_id, limit=50)
         return JSONResponse({"messages": messages})
@@ -421,29 +430,18 @@ async def get_history_endpoint(user_id: str):
 
 @app.get("/get_all_users")
 async def get_all_users(request: Request):
-    """Возвращает список всех пользователей для админ-панели"""
     verify_admin(request)
     try:
-        records, next_page = qdrant.scroll(
-            collection_name=HISTORY_COLLECTION,
-            limit=1000,
-            with_payload=True
-        )
-
+        records, next_page = qdrant.scroll(collection_name=HISTORY_COLLECTION, limit=1000, with_payload=True)
         users = {}
         for r in records:
             if r.payload:
                 uid = r.payload.get("user_id", "unknown")
                 if uid not in users:
-                    users[uid] = {
-                        "user_id": uid,
-                        "message_count": 0,
-                        "last_activity": r.payload.get("timestamp", "")
-                    }
+                    users[uid] = {"user_id": uid, "message_count": 0, "last_activity": r.payload.get("timestamp", "")}
                 users[uid]["message_count"] += 1
                 if r.payload.get("timestamp", "") > users[uid]["last_activity"]:
                     users[uid]["last_activity"] = r.payload.get("timestamp", "")
-
         sorted_users = sorted(users.values(), key=lambda x: x["last_activity"], reverse=True)
         return JSONResponse({"users": sorted_users, "total": len(sorted_users)})
     except Exception as e:
@@ -451,19 +449,11 @@ async def get_all_users(request: Request):
 
 @app.delete("/delete_user")
 async def delete_user(user_id: str, request: Request):
-    """Удаляет всю историю сообщений конкретного пользователя из Qdrant"""
     verify_admin(request)
     try:
         qdrant.delete(
             collection_name=HISTORY_COLLECTION,
-            points_selector=models.Filter(
-                must=[
-                    models.FieldCondition(
-                        key="user_id",
-                        match=models.MatchValue(value=user_id)
-                    )
-                ]
-            )
+            points_selector=models.Filter(must=[models.FieldCondition(key="user_id", match=models.MatchValue(value=user_id))])
         )
         return JSONResponse({"status": "success", "message": f"Пользователь {user_id} удален"})
     except Exception as e:
