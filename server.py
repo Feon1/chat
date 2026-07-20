@@ -194,12 +194,36 @@ async def process_message_core(user_id: str, text: str) -> str:
     print(f"🧠 Запрос от {user_id}: '{text[:50]}...'")
     save_to_history(user_id, "user", text)
 
-    # system – краткая инструкция, user – чистый вопрос
+    # 1. Получаем историю (последние 4 сообщения)
+    history = get_history(user_id, limit=4)
+    chat_history_str = ""
+    for msg in history:
+        role = "Пользователь" if msg['role'] == 'user' else "Ассистент"
+        chat_history_str += f"{role}: {msg['content']}\n"
+
+    # 2. Получаем контекст из базы знаний
+    context_chunks = await search_knowledge(text)
+    context_str = "\n".join(context_chunks) if context_chunks else ""
+
+    # 3. Собираем user-промпт
+    user_prompt_parts = []
+    if context_str:
+        user_prompt_parts.append(f"Контекст из базы знаний:\n{context_str}")
+    if chat_history_str:
+        user_prompt_parts.append(f"История диалога:\n{chat_history_str}")
+    user_prompt_parts.append(f"Вопрос пользователя: {text}")
+
+    user_prompt = "\n\n".join(user_prompt_parts)
+
+    # 4. Формируем messages
     messages = [
-        {"role": "system", "content": "Ты — ассистент. Отвечай на вопрос пользователя кратко и по существу, максимум 2-3 предложения. Без философии и лишних пояснений."},
-        {"role": "user", "content": text}
+        {"role": "system", "content": "Ты — ассистент. Отвечай на вопрос пользователя кратко и по существу, максимум 2-3 предложения. Без философии и лишних пояснений. Если есть контекст или история, используй их для ответа."},
+        {"role": "user", "content": user_prompt}
     ]
-    print(f"📤 Отправка в Polza: system='{messages[0]['content']}', user='{messages[1]['content']}'")
+
+    # Логируем отправляемый промпт (для отладки)
+    print(f"📤 Отправка в Polza: user_prompt='{user_prompt[:200]}...'")
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.polza.ai/v1/chat/completions",
@@ -208,12 +232,11 @@ async def process_message_core(user_id: str, text: str) -> str:
                 "model": "deepseek/deepseek-v4-flash",
                 "messages": messages,
                 "temperature": 0.3,
-                "max_tokens": 150
+                "max_tokens": 300   # чуть больше, чтобы вместился ответ с фактами
             },
             timeout=30.0
         )
         response.raise_for_status()
-        
         answer = response.json()["choices"][0]["message"]["content"].strip()
 
     if not answer:
