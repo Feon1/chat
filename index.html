@@ -2,68 +2,42 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Чат (Мобильная версия)</title>
-    <!-- Оптимизация для мобильных устройств -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Simple Chat</title>
+    <!-- Добавлен viewport-fit=cover для учета особенностей экрана -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <style>
-        /* Сброс стандартных стилей */
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
         body {
             font-family: Arial, sans-serif;
             margin: 0;
             padding: 0;
-            height: 100vh; /* Фиксированная высота на 100% вьюпорта */
-            display: flex;
-            flex-direction: column; /* Основной столбец: чат -> ввод -> футер */
-            overflow: hidden; /* Скрываем общий скролл body */
-            position: relative; /* Для позиционирования потомков */
+            /* Убираем общий скролл body, управление скроллом внутри #chatContainer */
+            overflow: hidden;
         }
 
         /* Контейнер чата */
         #chatContainer {
-            flex: 1; /* Занимает всё доступное пространство */
-            overflow-y: auto; /* Добавляем скролл только внутри контейнера чата */
+            height: 100vh; /* Высота на 100% вьюпорта */
+            overflow-y: auto; /* Добавляем скролл только внутри чата */
             padding: 10px;
-            /* Учитываем безопасные зоны */
+            /* Учет безопасной зоны (например, для "чёлки") */
+            padding-top: env(safe-area-inset-top, 0);
+            /* Учет нижней безопасной зоны и высоты фиксированного футера */
+            padding-bottom: calc(10px + env(safe-area-inset-bottom, 0) + 80px); /* 80px - примерная высота футера */
+            /* Учет боковых безопасных зон */
             padding-left: env(safe-area-inset-left, 0);
             padding-right: env(safe-area-inset-right, 0);
-            /* На ПК: обычный отступ. На мобильных: может понадобиться динамическая корректировка JS */
-            padding-bottom: 10px; 
             /* Псевдоэлемент для корректного скролла к новым сообщениям */
             scroll-behavior: smooth;
         }
 
-        /* Список сообщений */
         #messages {
             list-style-type: none;
             padding: 0;
-            display: flex;
-            flex-direction: column; /* Сообщения в нормальном порядке: старые -> новые */
-            gap: 8px; /* Отступ между сообщениями */
         }
 
         #messages li {
             margin-bottom: 10px;
             word-wrap: break-word;
-            padding: 8px;
-            border-radius: 8px;
-            background-color: #e9ecef; /* Светлый фон для всех сообщений */
-            max-width: 80%;
-        }
-
-        #messages li.user-message {
-            align-self: flex-end; /* Сообщения пользователя справа */
-            background-color: #d1ecf1;
-        }
-
-        #messages li.ai-message {
-            align-self: flex-start; /* Сообщения ИИ слева */
-            background-color: #f8d7da;
         }
 
         /* Контейнер ввода */
@@ -72,15 +46,17 @@
             gap: 5px;
             padding: 10px;
             background-color: #f0f0f0;
-            /* Не фиксируем на ПК, но готовим к фиксации на мобильных */
-            /* position: relative; на ПК */
-            /* position: fixed; bottom: 40px; на мобильных - будет через JS */
-            /* z-index будет через JS при фиксации */
+            /* Фиксируем контейнер ввода внизу */
+            position: fixed;
+            bottom: 40px; /* Размещаем над футером */
+            left: 0;
+            right: 0;
             box-sizing: border-box;
             align-items: center;
-            /* Учитываем безопасные зоны */
+            /* Учет боковых безопасных зон */
             padding-left: env(safe-area-inset-left, 0);
             padding-right: env(safe-area-inset-right, 0);
+            z-index: 100; /* Выше основного контента */
         }
 
         #messageInput {
@@ -103,22 +79,25 @@
             background-color: #0056b3;
         }
 
-        /* Футер */
+        /* Футер - фиксируем внизу */
         #footer {
+            position: fixed; /* Фиксируем футер внизу экрана */
+            bottom: 0; /* Прижимаем к низу */
+            left: 0;
+            right: 0;
             text-align: center;
             padding: 8px 10px;
-            /* Учитываем безопасные зоны */
+            /* Учет безопасных зон */
             padding-left: env(safe-area-inset-left, 0);
             padding-right: env(safe-area-inset-right, 0);
             padding-bottom: max(env(safe-area-inset-bottom, 0), 10px); /* Минимальный отступ снизу */
-            background-color: rgba(240, 240, 240, 0.95);
+            background-color: rgba(240, 240, 240, 0.95); /* Слегка прозрачный фон */
+            backdrop-filter: blur(5px); /* Эффект размытия фона (опционально) */
             color: #666;
             font-size: 0.8em;
-            box-shadow: 0 -1px 5px rgba(0,0,0,0.1);
-            border-top: 1px solid #ddd;
-            /* position: relative; на ПК */
-            /* position: fixed; bottom: 0; на мобильных - будет через JS */
-            /* z-index будет через JS при фиксации */
+            z-index: 99; /* Ниже #inputContainer */
+            box-shadow: 0 -1px 5px rgba(0,0,0,0.1); /* Легкая тень сверху */
+            border-top: 1px solid #ddd; /* Легкая граница сверху */
         }
 
         #footer a {
@@ -130,50 +109,42 @@
             text-decoration: underline;
         }
 
-        /* Простая анимация для новых сообщений */
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
+        /* Дополнительно: Стилизация скроллбара (опционально) */
+        #chatContainer::-webkit-scrollbar {
+            width: 6px;
         }
 
-        #messages li {
-          animation: fadeIn 0.2s ease-out forwards;
+        #chatContainer::-webkit-scrollbar-track {
+            background: #f1f1f1;
         }
 
-        /* Стили для мобильных, когда элементы фиксируются */
-        .mobile-layout #chatContainer {
-            /* На мобильных, когда input и footer фиксированы, chatContainer нужно уменьшить */
-            height: calc(100vh - 120px - env(safe-area-inset-bottom, 0px)); /* Примерная высота input + footer */
-            overflow-y: auto; /* Убедиться, что скролл работает */
+        #chatContainer::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
         }
 
-        .mobile-layout #inputContainer {
-            position: fixed;
-            bottom: 40px; /* Под футером */
-            left: 0;
-            right: 0;
-            z-index: 100;
+        #chatContainer::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
         }
 
-        .mobile-layout #footer {
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            z-index: 99;
-        }
+        /* --- Медиа-запрос для мобильных устройств (опционально, но полезно для уточнения стилей) --- */
+        /* @media (max-width: 768px) {
+            #chatContainer {
+                padding-bottom: calc(10px + env(safe-area-inset-bottom, 0) + 80px);
+            }
+            #inputContainer {
+                bottom: 40px; // Уже задано
+            }
+            #footer {
+                // Уже задано
+            }
+        } */
 
     </style>
 </head>
 <body>
     <div id="chatContainer">
-        <ul id="messages">
-            <!-- Примеры сообщений -->
-            <li class="ai-message">Привет! Это сообщение от ИИ.</li>
-            <li class="user-message">Привет! Это сообщение от пользователя.</li>
-            <li class="ai-message">Как дела?</li>
-            <li class="user-message">Хорошо, спасибо!</li>
-        </ul>
+        <ul id="messages"></ul>
     </div>
 
     <div id="inputContainer">
@@ -184,28 +155,35 @@
     <div id="footer">
         <a href="/privacy">Политика конфиденциальности</a> |
         <a href="/terms">Условия использования</a> |
-        <span>© 2024 Чат</span>
+        <span>© 2024 Simple Chat</span>
     </div>
 
     <script>
-        // Простой скрипт для добавления новых сообщений
+        // Пример функции для добавления сообщений (вам нужно заменить это на реальную логику WebSocket)
+        function addMessage(message) {
+            const messagesList = document.getElementById('messages');
+            const messageItem = document.createElement('li');
+            messageItem.textContent = message;
+            messagesList.appendChild(messageItem);
+
+            // Прокручиваем вниз после добавления сообщения
+            messagesList.scrollTop = messagesList.scrollHeight;
+        }
+
+        // Пример функции отправки сообщения
         function sendMessage() {
             const inputElement = document.getElementById('messageInput');
             const messageText = inputElement.value.trim();
             if (!messageText) return;
 
-            const messagesList = document.getElementById('messages');
-            const messageItem = document.createElement('li');
-            messageItem.textContent = messageText;
-            messageItem.classList.add('user-message'); // Добавляем класс для стилизации
-            messagesList.appendChild(messageItem); // Добавляем в конец списка
-
+            // Добавляем сообщение пользователя (временно)
+            addMessage(`Вы: ${messageText}`);
             // Очищаем поле ввода
             inputElement.value = '';
             inputElement.focus(); // Фокус обратно на поле ввода
 
-            // Прокручиваем к новому сообщению (в конец списка)
-            messageItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            // Здесь должна быть логика отправки через WebSocket
+            // socket.send(JSON.stringify({type: 'message', data: messageText}));
         }
 
         // Обработка нажатия Enter в поле ввода
@@ -215,45 +193,36 @@
             }
         });
 
-        // --- Логика адаптации под мобильные устройства ---
-        let isMobileLayoutActive = false;
+        // Пример получения сообщения (это будете делать вы при получении от WebSocket)
+        // addMessage("Привет от ИИ!");
 
-        function updateMobileLayout() {
-            const isMobile = window.innerWidth <= 768 || window.matchMedia('(max-height: 500px)').matches; // Примерный критерий
+        // --- Дополнительная логика для оптимизации при открытии клавиатуры на мобильных ---
+        // Это не гарантирует срабатывание на всех устройствах, но может помочь
+        let initialViewportHeight = window.innerHeight;
 
-            if (isMobile && !isMobileLayoutActive) {
-                document.body.classList.add('mobile-layout');
-                isMobileLayoutActive = true;
-                console.log("Переключено на мобильный макет");
-            } else if (!isMobile && isMobileLayoutActive) {
-                document.body.classList.remove('mobile-layout');
-                isMobileLayoutActive = false;
-                console.log("Переключено на ПК макет");
-            }
-        }
+        window.addEventListener('resize', function() {
+            // Простая эвристика: если высота вьюпорта уменьшилась, возможно, открылась клавиатура
+            const currentViewportHeight = window.innerHeight;
+            const heightDifference = initialViewportHeight - currentViewportHeight;
 
-        // Запускаем при загрузке
-        window.addEventListener('load', () => {
-            updateMobileLayout();
-            // Прокручиваем к последнему сообщению при загрузке
-            const messagesList = document.getElementById('messages');
-            if (messagesList.lastChild) {
-                 messagesList.lastChild.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+            // Если разница больше порога (например, 150px), предполагаем открытие клавиатуры
+            // и временно увеличиваем padding-bottom у #chatContainer
+            const chatContainer = document.getElementById('chatContainer');
+            const footerHeight = 80; // Примерная высота футера
+            const keyboardThreshold = 150;
+
+            if (heightDifference > keyboardThreshold) {
+                // Увеличиваем отступ, чтобы освободить место под клавиатуру и футер
+                // Это может быть не идеально, но попытка улучшить UX
+                chatContainer.style.paddingBottom = `calc(10px + env(safe-area-inset-bottom, 0) + ${footerHeight}px + ${heightDifference}px)`;
+                console.log("Клавиатура, возможно, открыта. Увеличен отступ.");
+            } else {
+                // Возвращаем к стандартному отступу
+                chatContainer.style.paddingBottom = `calc(10px + env(safe-area-inset-bottom, 0) + ${footerHeight}px)`;
+                console.log("Клавиатура, возможно, закрыта. Отступ возвращен.");
             }
         });
 
-        // Обновляем макет при изменении размера окна
-        window.addEventListener('resize', updateMobileLayout);
-
-        // Дополнительно: попробовать обнаружить открытие клавиатуры (ненадёжный способ)
-        // window.addEventListener('focusin', (e) => {
-        //     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-        //         setTimeout(updateMobileLayout, 300); // Небольшая задержка для срабатывания resize
-        //     }
-        // });
-        // window.addEventListener('focusout', () => {
-        //     setTimeout(updateMobileLayout, 300);
-        // });
 
     </script>
 </body>
