@@ -11,6 +11,11 @@ from dotenv import load_dotenv
 import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+import traceback
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -410,18 +415,15 @@ async def upload_document(file: UploadFile = File(...)):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/query")
-async def handle_query(request: Request):
+async def query(request: Request):
     try:
-        body = await request.json()
-        text = body.get("text", "")
-        user_id = body.get("user_id", "anonymous")
-        if not text:
-            return JSONResponse({"error": "Текст пуст"}, status_code=400)
-        answer = await process_message_core(user_id, text)
-        return JSONResponse({"answer": answer, "source": "rag_llm"})
+        data = await request.json()
+        user_input = data.get("message", "")
+        # ...
+        return {"response": answer}
     except Exception as e:
-        print(f"❌ Ошибка в /query: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        logger.error(f"Ошибка в /query: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/get_history")
 async def get_history_endpoint(user_id: str):
