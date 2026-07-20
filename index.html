@@ -391,38 +391,58 @@ const userId = getStableUserId();
         }
 
         // Отправка сообщения
-        async function sendMessage() {
-            const text = messageInput.value.trim();
-            if (!text || !isConnected) return;
+       async function sendMessage() {
+    const text = messageInput.value.trim();
+    if (!text || !isConnected) return;
 
-            addMessage(text, 'user', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
-            messageInput.value = '';
-            messageInput.style.height = 'auto';
-            sendButton.disabled = true;
-            typingIndicator.classList.add('active');
+    addMessage(text, 'user', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    messageInput.value = '';
+    messageInput.style.height = 'auto';
+    sendButton.disabled = true;
+    typingIndicator.classList.add('active');
 
-            try {
-                const response = await fetch(API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: text, user_id: userId })
-                });
-                const data = await response.json();
-                typingIndicator.classList.remove('active');
-                
-                if (data.response) {
-                    addMessage(data.response, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
-                } else if (data.error) {
-                    addMessage('Ошибка: ' + data.error, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
-                }
-            } catch (err) {
-                typingIndicator.classList.remove('active');
-                addMessage('Ошибка соединения', 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
-            } finally {
-                sendButton.disabled = false;
-                messageInput.focus();
-            }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+    try {
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, user_id: userId }),
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Сервер вернул ${response.status}: ${errorText}`);
         }
+
+        const data = await response.json();
+        typingIndicator.classList.remove('active');
+
+        if (data.response && data.response.trim() !== '') {
+            addMessage(data.response, 'bot', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        } else if (data.error) {
+            addMessage('Ошибка: ' + data.error, 'bot', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        } else {
+            addMessage('Не удалось получить ответ от сервера.', 'bot', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        }
+    } catch (err) {
+        typingIndicator.classList.remove('active');
+        console.error('Ошибка запроса:', err);
+        if (err.name === 'AbortError') {
+            addMessage('Превышено время ожидания ответа. Попробуйте позже.', 'bot', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        } else {
+            addMessage('Ошибка соединения с сервером. Проверьте интернет.', 'bot', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+        }
+    } finally {
+        sendButton.disabled = false;
+        messageInput.focus();
+        // таймаут уже очищен в try, но на случай, если ошибка произошла до очистки
+        clearTimeout(timeoutId);
+    }
+}
 
         sendButton.addEventListener('click', sendMessage);
         messageInput.addEventListener('keypress', (e) => {
