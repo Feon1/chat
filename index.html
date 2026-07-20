@@ -18,6 +18,54 @@
             overflow: hidden; /* Чтобы не было скролла во время загрузки */
         }
 
+                /* Футер, жестко прижатый к низу экрана */
+        .footer-links {
+            position: fixed !important;
+            bottom: 20px !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            z-index: 9999 !important;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+            width: 95%;
+            text-align: center;
+        }
+        .footer-link {
+            font-size: 14px;
+            color: #ffffff;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+            font-weight: 500;
+            text-decoration: none;
+            opacity: 0.9;
+            transition: opacity 0.2s;
+        }
+        .footer-link:hover { opacity: 1; text-decoration: underline; }
+        .footer-divider {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 14px;
+        }
+        .footer-donate {
+            font-size: 14px;
+            color: #ff6b6b;
+            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+            font-weight: 600;
+        }
+
+        /* Адаптация для мобильных, чтобы текст не вылезал за края */
+        @media (max-width: 600px) {
+            .footer-links {
+                bottom: 10px !important;
+                gap: 6px !important;
+                font-size: 12px;
+            }
+            .footer-link, .footer-divider, .footer-donate {
+                font-size: 12px !important;
+            }
+        }
+
         /* Глобальный экран подключения */
         .global-overlay {
             position: fixed;
