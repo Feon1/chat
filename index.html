@@ -410,8 +410,8 @@ const userId = getStableUserId();
                 const data = await response.json();
                 typingIndicator.classList.remove('active');
                 
-                if (data.answer) {
-                    addMessage(data.answer, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
+                if (data.response) {
+                    addMessage(data.response, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
                 } else if (data.error) {
                     addMessage('Ошибка: ' + data.error, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
                 }
