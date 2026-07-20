@@ -14,6 +14,8 @@ from qdrant_client.http import models
 import traceback
 import logging
 
+SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "Ты — Феон верующий ИИ.")
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -180,6 +182,7 @@ def get_history(user_id: str, limit: int = 50) -> list[dict]:
 
 
 # ==========================================
+## ==========================================
 # 🧠 УНИВЕРСАЛЬНОЕ ЯДРО ЧАТА
 # ==========================================
 async def process_message_core(user_id: str, text: str) -> str:
@@ -204,11 +207,21 @@ async def process_message_core(user_id: str, text: str) -> str:
 
     prompt += f"Вопрос пользователя: {text}\n\nДай полезный, точный и развернутый ответ."
 
+    # Формируем список сообщений: системное + пользовательское
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": prompt}
+    ]
+
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "https://api.polza.ai/v1/chat/completions",
             headers={"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"},
-            json={"model": "deepseek/deepseek-v4-flash", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3},
+            json={
+                "model": "deepseek/deepseek-v4-flash",
+                "messages": messages,
+                "temperature": 0.3
+            },
             timeout=30.0
         )
         response.raise_for_status()
