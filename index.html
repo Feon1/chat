@@ -125,25 +125,28 @@
         }
 
         /* Кнопка открытия чата (скрыта по умолчанию) */
-        .chat-launcher {
-            position: fixed;
-            bottom: 100px; /* Размещаем над футером */
-            right: 30px;
-            width: 60px; height: 60px;
-            background: white;
-            border-radius: 50%;
-            border: none;
-            color: #667eea;
-            font-size: 28px;
-            cursor: pointer;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
-            transition: transform 0.3s;
-            z-index: 1001; /* Выше футера */
-            display: none; /* Скрыта до подключения */
-        }
+       /* Кнопка открытия чата (скрыта по умолчанию) */
+.chat-launcher {
+    position: fixed;
+    bottom: 100px; /* Размещаем над футером */
+    right: 30px;
+    width: 60px; height: 60px;
+    /* --- Изменения начинаются здесь --- */
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); /* Применяем градиент как у заголовка чата */
+    color: white; /* Меняем цвет иконки на белый для лучшей видимости */
+    /* --- Изменения заканчиваются здесь --- */
+    border-radius: 50%;
+    border: none;
+    font-size: 28px;
+    cursor: pointer;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+    transition: transform 0.3s;
+    z-index: 1001; /* Выше футера */
+    display: none; /* Скрыта до подключения */
+}
 
-        .chat-launcher.visible { display: flex; align-items: center; justify-content: center; }
-        .chat-launcher:hover { transform: scale(1.1); }
+.chat-launcher.visible { display: flex; align-items: center; justify-content: center; }
+.chat-launcher:hover { transform: scale(1.1); }
 
         /* Виджет чата */
         .chat-widget {
