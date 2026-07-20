@@ -195,53 +195,32 @@
     </div>
 
 
-           /* Футер, жестко прижатый к низу экрана */
-        .footer-links {
-            position: fixed !important;
-            bottom: 20px !important;
-            left: 50% !important;
-            transform: translateX(-50%) !important;
-            z-index: 9999 !important;
-            display: flex;
-            gap: 12px;
-            align-items: center;
-            flex-wrap: wrap;
-            justify-content: center;
-            width: 95%;
-            text-align: center;
-        }
-        .footer-link {
-            font-size: 14px;
-            color: #ffffff;
-            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
-            font-weight: 500;
-            text-decoration: none;
-            opacity: 0.9;
-            transition: opacity 0.2s;
-        }
-        .footer-link:hover { opacity: 1; text-decoration: underline; }
-        .footer-divider {
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 14px;
-        }
-        .footer-donate {
-            font-size: 14px;
-            color: #ff6b6b;
-            text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
-            font-weight: 600;
-        }
+   <!-- Футер с ссылками -->
+    <div class="footer-links">
+        <span class="footer-donate">❤️ Donate</span>
+        <span class="footer-divider">|</span>
+        <a href="https://yoomoney.ru/to/4100119548371455" target="_blank" class="footer-link">💳 ЮMoney: 4100119548371455</a>
+        <span class="footer-divider">|</span>
+        <a href="mailto:feon.5upport@ya.ru" class="footer-link">📧 support:feon.5upport@ya.ru</a>
+        <span class="footer-divider">|</span>
+        <a href="https://vk.ru/feon_community" target="_blank" class="footer-link">💬 Группа ВКонтакте</a>
+    </div>
+    <script>
+    (function(){
+        // Элементы DOM
+        const globalOverlay = document.getElementById('globalOverlay');
+        const globalStatus = document.getElementById('globalStatus');
+        const launcherBtn = document.getElementById('launcherBtn');
+        const chatWidget = document.getElementById('chatWidget');
+        const closeChatBtn = document.getElementById('closeChatBtn');
+        const messages = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+        const typingIndicator = document.getElementById('typingIndicator');
 
-        /* Адаптация для мобильных, чтобы текст не вылезал за края */
-        @media (max-width: 600px) {
-            .footer-links {
-                bottom: 10px !important;
-                gap: 6px !important;
-                font-size: 12px;
-            }
-            .footer-link, .footer-divider, .footer-donate {
-                font-size: 12px !important;
-            }
-        }
+        const API_URL = 'https://docker-new-chat.onrender.com/query';
+        const HISTORY_URL = 'https://docker-new-chat.onrender.com/get_history';
+        const PING_URL = 'https://docker-new-chat.onrender.com/';
 
         // ==========================================
 // СТАБИЛЬНАЯ ГЕНЕРАЦИЯ USER ID (LocalStorage + Cookie)
