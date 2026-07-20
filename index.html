@@ -419,15 +419,26 @@ const userId = getStableUserId();
         }
 
         const data = await response.json();
-        typingIndicator.classList.remove('active');
+console.log('📨 Ответ сервера:', data); // 👈 Выводим полный ответ в консоль
+typingIndicator.classList.remove('active');
+if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Сервер вернул ${response.status}: ${errorText}`);
+}        
 
-        if (data.response && data.response.trim() !== '') {
-            addMessage(data.response, 'bot', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-        } else if (data.error) {
-            addMessage('Ошибка: ' + data.error, 'bot', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-        } else {
-            addMessage('Не удалось получить ответ от сервера.', 'bot', new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-        }
+// Проверяем наличие разных полей
+if (data.response && data.response.trim() !== '') {
+    addMessage(data.response, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
+} else if (data.error) {
+    addMessage('❌ Ошибка: ' + data.error, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
+} else if (data.detail) {  // Стандартное поле для ошибок FastAPI
+    addMessage('❌ Ошибка сервера: ' + data.detail, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
+} else if (data.answer) {  // Если вдруг сервер вернёт answer (на случай, если вы меняли бэкенд)
+    addMessage(data.answer, 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
+} else {
+    // Если ничего не подошло — показываем сырые данные для диагностики
+    addMessage('⚠️ Неизвестный формат ответа: ' + JSON.stringify(data), 'bot', new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
+}
     } catch (err) {
         typingIndicator.classList.remove('active');
         console.error('Ошибка запроса:', err);
