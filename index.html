@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Чат (Универсальный)</title>
+    <title>Чат (Мобильная версия)</title>
     <!-- Оптимизация для мобильных устройств -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <style>
@@ -33,8 +33,8 @@
             /* Учитываем безопасные зоны, особенно на мобильных */
             padding-left: env(safe-area-inset-left, 0);
             padding-right: env(safe-area-inset-right, 0);
-            /* На мобильных устройим место внизу для fixed-футера */
-            padding-bottom: calc(10px + env(safe-area-inset-bottom, 0));
+            /* Оставляем место внизу для fixed-элементов */
+            padding-bottom: calc(10px + env(safe-area-inset-bottom, 0) + 80px); /* 80px - примерная высота футера */
             /* Псевдоэлемент для корректного скролла к новым сообщениям */
             scroll-behavior: smooth;
         }
@@ -47,8 +47,7 @@
             flex-direction: column-reverse; /* Новые сообщения сверху */
         }
 
-        #messages li {            margin-bottom: 10px;
-            word-wrap: break-word;
+        #messages li {            margin-bottom: 10px;            word-wrap: break-word;
             padding: 8px;
             border-radius: 8px;
             background-color: #e9ecef; /* Светлый фон для всех сообщений */
@@ -71,10 +70,13 @@
             gap: 5px;
             padding: 10px;
             background-color: #f0f0f0;
-            /* На ПК - статичный, на мобильном - fixed */
-            position: relative;
+            position: fixed; /* Фиксируем внизу */
+            bottom: 40px; /* Размещаем над футером */
+            left: 0;
+            right: 0;
             box-sizing: border-box;
             align-items: center;
+            z-index: 100; /* Выше основного контента */
             /* Учитываем безопасные зоны */
             padding-left: env(safe-area-inset-left, 0);
             padding-right: env(safe-area-inset-right, 0);
@@ -93,32 +95,34 @@
             background-color: #007bff;
             color: white;
             cursor: pointer;
-            border-radius: 4px;
+            border-radius: 4px;        }
+        button:hover {
+            background-color: #0056b3;
         }
 
-        button:hover {            background-color: #0056b3;
-        }
-
-        /* Футер - по умолчанию статичный (как на ПК) */
+        /* Футер - фиксированный внизу */
         #footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
             text-align: center;
             padding: 8px 10px;
             /* Учитываем безопасные зоны */
             padding-left: env(safe-area-inset-left, 0);
             padding-right: env(safe-area-inset-right, 0);
-            background-color: rgba(240, 240, 240, 0.95); /* Slightly transparent bg */
-            /* Цвет обычного текста в футере */
+            padding-bottom: max(env(safe-area-inset-bottom, 0), 10px); /* Минимальный отступ снизу */
+            background-color: rgba(240, 240, 240, 0.95); /* Сlightly transparent bg */
             color: #666;
             font-size: 0.8em;
+            z-index: 99; /* Ниже inputContainer */
             box-shadow: 0 -1px 5px rgba(0,0,0,0.1); /* Легкая тень сверху */
             border-top: 1px solid #ddd; /* Легкая граница сверху */
-            /* На ПК - статично внизу, на мобильном - fixed */
-            position: relative;
         }
 
-        /* Цвет ссылок футера изменён на темно-синий */
+        /* Изменён цвет ссылок на темно-синий */
         #footer a {
-            color: #003366;
+            color: #003366; 
             text-decoration: none;
         }
 
@@ -136,54 +140,12 @@
           animation: fadeIn 0.2s ease-out forwards;
         }
 
-        /* --- Адаптация под мобильные устройства --- */
-        @media (max-width: 768px) { /* Примерный брейкпоинт для мобильных */
-
-            /* Контейнер чата */
-            #chatContainer {
-                /* padding-bottom уже установлен выше */
-            }
-
-            /* Контейнер ввода - становится fixed на мобильном */
-            #inputContainer {                position: fixed;
-                bottom: 40px; /* Размещаем над футером */
-                left: 0;
-                right: 0;
-                z-index: 100; /* Выше основного контента */
-            }
-
-            /* Футер - становится fixed на мобильном */
-            #footer {
-                position: fixed;
-                bottom: 0;
-                left: 0;
-                right: 0;
-                z-index: 99; /* Ниже inputContainer */
-                /* Дополнительный отступ снизу для безопасной зоны на мобильных */
-                padding-bottom: max(env(safe-area-inset-bottom, 0), 10px);
-            }
-
-            /* Корректировка высоты чата на мобильном, чтобы учесть fixed inputContainer и footer */
-            /* Это может быть сложно сделать чисто через CSS, если footer и inputContainer fixed */
-            /* Вместо изменения height родителя, rely on padding-bottom chatContainer */
-            /* #chatContainer уже имеет padding-bottom для этого */
-        }
-
-        /* --- Адаптация под ПК (опционально, если хочется явно указать) --- */
-        @media (min-width: 769px) {
-            /* #footer остается position: relative; */
-            /* #inputContainer остается position: relative; */
-            /* #chatContainer использует оставшееся место от flex */
-        }
-
     </style>
 </head>
 <body>
     <div id="chatContainer">
-        <ul id="messages">
-            <!-- Примеры сообщений -->
-            <li class="ai-message">Привет! Это сообщение от ИИ.</li>
-            <li class="user-message">Привет! Это сообщение от пользователя.</li>
+        <ul id="messages">            <!-- Примеры сообщений -->
+            <li class="ai-message">Привет! Это сообщение от ИИ.</li>            <li class="user-message">Привет! Это сообщение от пользователя.</li>
             <li class="ai-message">Как дела?</li>
             <li class="user-message">Хорошо, спасибо!</li>
         </ul>
@@ -194,7 +156,8 @@
         <button onclick="sendMessage()">Отправить</button>
     </div>
 
-    <div id="footer">        <a href="/privacy">Политика конфиденциальности</a> |
+    <div id="footer">
+        <a href="/privacy">Политика конфиденциальности</a> |
         <a href="/terms">Условия использования</a> |
         <span>© 2024 Чат</span>
     </div>
@@ -229,11 +192,9 @@
         // При загрузке прокручиваем к последнему сообщению (теперь это последний элемент из-за flex-direction: column-reverse)
         window.addEventListener('load', () => {
             const messagesList = document.getElementById('messages');
-            if (messagesList.lastChild) {
-                 messagesList.lastChild.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+            if (messagesList.lastChild) {                 messagesList.lastChild.scrollIntoView({ behavior: 'auto', block: 'nearest' });
             }
         });
-
     </script>
 </body>
 </html>
