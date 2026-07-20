@@ -232,7 +232,7 @@ async def process_message_core(user_id: str, text: str) -> str:
                 "model": "deepseek/deepseek-v4-flash",
                 "messages": messages,
                 "temperature": 0.4,
-                "max_tokens": 300   # чуть больше, чтобы вместился ответ с фактами
+                "max_tokens": 1000   # чуть больше, чтобы вместился ответ с фактами
             },
             timeout=30.0
         )
