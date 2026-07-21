@@ -325,6 +325,29 @@ async def max_webhook(request: Request):
 # ==========================================
 # 🔷 MAX ИНТЕГРАЦИЯ
 # ==========================================
+try:
+    import certifi
+    CA_BUNDLE = certifi.where()
+    print(f"✅ Сертификаты загружены из: {CA_BUNDLE}")
+except ImportError:
+    CA_BUNDLE = None
+    print("⚠️ certifi не установлен, попробуем системный путь")
+
+# Если certifi не сработал, пробуем системный путь
+if not CA_BUNDLE:
+    import os
+    if os.path.exists("/etc/ssl/certs/ca-certificates.crt"):
+        CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+    elif os.path.exists("/etc/pki/tls/certs/ca-bundle.crt"):
+        CA_BUNDLE = "/etc/pki/tls/certs/ca-bundle.crt"
+
+# Создаём SSL-контекст с сертификатами
+if CA_BUNDLE:
+    ssl_context = ssl.create_default_context(cafile=CA_BUNDLE)
+else:
+    ssl_context = None
+    print("⚠️ Не удалось найти сертификаты, будет использован verify=False")
+
 async def set_max_webhook():
     """Устанавливает вебхук для MAX бота"""
     if not MAX_BOT_TOKEN or not MAX_WEBHOOK_URL:
@@ -338,8 +361,14 @@ async def set_max_webhook():
     }
     payload = {"url": MAX_WEBHOOK_URL}
 
-    async with httpx.AsyncClient(timeout=10.0, verify=ssl_context) as client:
-    # async with httpx.AsyncClient(timeout=10.0) as client:
+    # Выбираем метод проверки SSL
+    if ssl_context:
+        verify_param = ssl_context
+    else:
+        verify_param = False
+        print("⚠️ Используем verify=False (небезопасно, только для теста)")
+
+    async with httpx.AsyncClient(timeout=10.0, verify=verify_param) as client:
         try:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
@@ -360,8 +389,12 @@ async def send_max_message(chat_id: str, text: str):
     }
     payload = {"chat_id": chat_id, "text": text}
 
-    async with httpx.AsyncClient(timeout=10.0, verify=ssl_context) as client:
-    # async with httpx.AsyncClient(timeout=10.0) as client:
+    if ssl_context:
+        verify_param = ssl_context
+    else:
+        verify_param = False
+
+    async with httpx.AsyncClient(timeout=10.0, verify=verify_param) as client:
         try:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
