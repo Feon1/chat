@@ -8,9 +8,9 @@ from datetime import datetime
 import uvicorn
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from sentence_transformers import SentenceTransformer
-import numpy as np
-# from light_embed import TextEmbedding
+# from sentence_transformers import SentenceTransformer
+# import numpy as np
+from light_embed import TextEmbedding
 
 # ---------- НАСТРОЙКА ЛОГГИРОВАНИЯ ----------
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +32,7 @@ qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
 # ---------- МОДЕЛЬ ЭМБЕДДИНГОВ ----------
 
-embedding_model = SentenceTransformer('LightEmbed/sbert-paraphrase-multilingual-MiniLM-L12-v2-onnx')
+embedding_model = TextEmbedding('LightEmbed/sbert-paraphrase-multilingual-MiniLM-L12-v2-onnx')
 
 # ---------- FASTAPI APP ----------
 app = FastAPI(title="XiaoZhi RAG Adapter")
