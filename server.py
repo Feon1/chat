@@ -302,24 +302,33 @@ async def max_webhook(request: Request):
     except Exception:
         return PlainTextResponse("ok")
 
-    event_type = body.get("event_type")
-    if event_type == "message":
-        chat_id = body["chat"]["id"]
-        # Формируем уникальный ID пользователя для хранения истории
-        user_id = f"max_{body['from']['id']}"
-        text = body.get("text", "").strip()
+    # Правильно определяем тип события
+    update_type = body.get("update_type")
+    
+    # Обрабатываем только новые сообщения
+    if update_type == "message_created":
+        message_data = body.get("message", {})
+        sender = message_data.get("sender", {})
+        recipient = message_data.get("recipient", {})
+        message_body = message_data.get("body", {})
+        
+        # Извлекаем данные согласно структуре из логов
+        user_id = f"max_{sender.get('user_id')}"  # ID отправителя
+        chat_id = recipient.get("chat_id")        # ID чата
+        text = message_body.get("text", "").strip()  # Текст сообщения
+        
         if not text:
             return PlainTextResponse("ok")
-
+        
         try:
-            # Используем ваше универсальное ядро для обработки
+            # Отправляем сообщение в ваше ядро обработки
             answer = await process_message_core(user_id, text)
             await send_max_message(chat_id, answer)
         except Exception as e:
             print(f"❌ Ошибка обработки сообщения MAX: {e}")
             traceback.print_exc()
             await send_max_message(chat_id, "Извините, произошла ошибка.")
-
+    
     return PlainTextResponse("ok")
 
 # ==========================================
