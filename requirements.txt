@@ -13,9 +13,9 @@ pypdf
 python-docx
 supabase
 httpx>=0.24.0
-# sentence-transformers
+sentence-transformers
 torch
-# transformers
+transformers
 numpy
-light-embed
+# light-embed
 
