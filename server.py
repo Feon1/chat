@@ -12,6 +12,11 @@ from dotenv import load_dotenv
 import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+import certifi
+import ssl
+
+
+ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 load_dotenv()
 
@@ -333,7 +338,8 @@ async def set_max_webhook():
     }
     payload = {"url": MAX_WEBHOOK_URL}
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, verify=ssl_context) as client:
+    # async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
@@ -354,7 +360,8 @@ async def send_max_message(chat_id: str, text: str):
     }
     payload = {"chat_id": chat_id, "text": text}
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, verify=ssl_context) as client:
+    # async with httpx.AsyncClient(timeout=10.0) as client:
         try:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
