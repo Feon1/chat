@@ -189,7 +189,8 @@ async def process_message_core(user_id: str, text: str) -> str:
 
     print(f"🧠 Запрос от {user_id}: '{text[:50]}...'")
     save_to_history(user_id, "user", text)
-    history = get_history(user_id, limit=6)
+    # Берём только последние 3 сообщения для краткости
+    history = get_history(user_id, limit=3)
 
     chat_history_str = ""
     for msg in history:
@@ -206,18 +207,26 @@ async def process_message_core(user_id: str, text: str) -> str:
     context = await search_knowledge(text)
     prompt = ""
     if chat_history_str:
-        prompt += f"История текущего диалога:\n{chat_history_str}\n\n"
+        prompt += f"История диалога (кратко):\n{chat_history_str}\n\n"
     if context:
-        prompt += f"Дополнительный КОНТЕКСТ из базы знаний:\n{context}\n\n"
+        prompt += f"Контекст из базы знаний:\n{context}\n\n"
 
-    prompt += f"Вопрос пользователя: {text}\n\nДай полезный, точный и развернутый ответ."
+    # 🔥 Жёсткая инструкция – без воды
+    prompt += f"Вопрос пользователя: {text}\n\n"
+    prompt += "Ответь максимально кратко и по существу, без лишних рассуждений, советов, анализа и рефлексии. "
+    prompt += "Если вопрос простой – дай прямой ответ в 1–2 предложениях. Не повторяй историю диалога."
 
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
                 "https://api.polza.ai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"},
-                json={"model": "deepseek/deepseek-v4-flash", "messages": [{"role": "user", "content": prompt}], "temperature": 0.3},
+                json={
+                    "model": "deepseek/deepseek-v4-flash",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,      # снижаем креативность → меньше лишнего
+                    "max_tokens": 850        # ограничиваем длину ответа (если поддерживается)
+                },
                 timeout=30.0
             )
             response.raise_for_status()
