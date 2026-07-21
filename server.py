@@ -249,25 +249,21 @@ async def root():
 
 @app.post("/query")
 async def handle_query(request: Request):
-    """
-    Эндпоинт для обработки запросов от фронтенда.
-    Ожидает JSON: {"user_id": "...", "message": "..."}
-    """
     try:
-        data = await request.json()
-        user_id = data.get("user_id")
-        message = data.get("message")
+        body = await request.json()
+        # Принимаем оба варианта: message или text
+        message = body.get("message") or body.get("text", "")
+        user_id = body.get("user_id", "anonymous")
         
-        if not user_id or not message:
-            raise HTTPException(status_code=400, detail="Не указаны user_id или message")
+        if not message:
+            return JSONResponse({"error": "Сообщение не может быть пустым"}, status_code=400)
         
-        # Генерируем ответ через вашу существующую логику
         answer = await process_message_core(user_id, message)
-        
-        return {"response": answer}
+        # Возвращаем поле "response", которое ожидает фронтенд
+        return JSONResponse({"response": answer})
     except Exception as e:
-        logger.error(f"Ошибка в /query: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"❌ Ошибка в /query: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/get_history")
 async def get_history(user_id: str):
