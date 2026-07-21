@@ -357,7 +357,7 @@
                 const response = await fetch(`${API_BASE}/get_history?user_id=${encodeURIComponent(userId)}`, { headers: { 'x-admin-token': adminToken } });
                 if (response.status === 401) { logout(); return; }
                 const data = await response.json();
-                const messages = data.messages || [];
+                const messages = data.history || [];
                 
                 if (messages.length === 0) { chatViewEl.innerHTML = '<div class="empty-state">История пуста</div>'; return; }
                 
