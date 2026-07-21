@@ -8,7 +8,7 @@ from datetime import datetime
 import uvicorn
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from sentence_transformers import SentenceTransformer
+# from sentence_transformers import SentenceTransformer
 import numpy as np
 # from light_embed import TextEmbedding
 from fastembed import TextEmbedding
