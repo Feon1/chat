@@ -11,6 +11,7 @@ from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
 import numpy as np
 # from light_embed import TextEmbedding
+from fastembed import TextEmbedding
 
 # ---------- НАСТРОЙКА ЛОГГИРОВАНИЯ ----------
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +33,7 @@ qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
 # ---------- МОДЕЛЬ ЭМБЕДДИНГОВ ----------
 
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+embedding_model = TextEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
 # ---------- FASTAPI APP ----------
 app = FastAPI(title="XiaoZhi RAG Adapter")
@@ -46,8 +47,10 @@ app.add_middleware(
 
 # ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ваша логика) ----------
 def get_embedding(text: str) -> list:
-    embedding = embedding_model.encode([text])[0]  # получаем numpy-массив
-    return embedding.tolist()
+    """Получить эмбеддинг для текста"""
+    # fastembed.embed() возвращает генератор, преобразуем в список
+    embedding = list(embedding_model.embed([text]))[0]
+    return embedding.tolist() 
 
 async def search_knowledge(query: str, top_k: int = 5) -> list:
     query_vector = get_embedding(query)
