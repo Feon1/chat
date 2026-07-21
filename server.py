@@ -27,9 +27,17 @@ MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN")
 MAX_WEBHOOK_URL = os.getenv("MAX_WEBHOOK_URL")
 
 # ---------- ПОДКЛЮЧЕНИЕ К QDRANT ----------
-QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
-QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
-qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+# QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
+# QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
+# qdrant_client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+
+QDRANT_URL = os.getenv("QDRANT_URL")
+QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+qdrant_client = QdrantClient(
+    url=QDRANT_URL,
+    api_key=QDRANT_API_KEY,
+    timeout=30  # можно добавить таймаут для надёжности
+)
 
 # ---------- МОДЕЛЬ ЭМБЕДДИНГОВ ----------
 
