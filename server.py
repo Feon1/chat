@@ -13,6 +13,10 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 import traceback
 import logging
+from fastapi import Header
+import hmac
+import hashlib
+
 
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "Ты — Феон верующий ИИ.")
 
@@ -32,6 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN")
 # Получаем токены из переменных окружения
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -108,6 +113,10 @@ async def startup_event():
                 print(f"❌ Ошибка установки Telegram Webhook: {e}")
     else:
         print("⚠️ Переменные TELEGRAM_BOT_TOKEN или WEBHOOK_URL не найдены.")
+    if MAX_BOT_TOKEN:
+        await set_max_webhook() 
+     else:
+        print("⚠️ Переменные MAX_TOKEN или WEBHOOK_URL не найдены.")    
 
 
 # ==========================================
@@ -244,6 +253,84 @@ async def process_message_core(user_id: str, text: str) -> str:
 
     save_to_history(user_id, "bot", answer)
     return answer
+
+@app.post("/webhook/max")
+async def max_webhook(request: Request):
+    """
+    Эндпоинт для приёма вебхуков от MAX.
+    MAX отправляет POST-запрос с JSON-телом при каждом событии.
+    """
+    try:
+        body = await request.json()
+        logger.info(f"Получен вебхук от MAX: {body}")
+    except Exception as e:
+        logger.error(f"Ошибка парсинга JSON: {e}")
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    event_type = body.get("event_type")
+    
+    if event_type == "message":
+        # Извлекаем данные из события
+        chat_id = body["chat"]["id"]
+        user_id = body["from"]["id"]
+        text = body.get("text", "")
+        
+        # Логируем входящее сообщение
+        logger.info(f"Сообщение от {user_id} в чате {chat_id}: {text}")
+        
+        # Генерируем ответ через вашу существующую функцию
+        # Предполагается, что generate_response определена где-то в коде
+        # и принимает user_id, текст и платформу (опционально)
+        try:
+            answer = await generate_response(
+                user_id=user_id,
+                query=text,
+                platform="max"   # если ваша функция поддерживает параметр platform
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при генерации ответа: {e}")
+            answer = "Извините, произошла ошибка при обработке запроса."
+        
+        # Отправляем ответ обратно в MAX
+        await send_max_message(chat_id, answer)
+        
+        # Возвращаем успешный статус, чтобы MAX не повторял запрос
+        return {"status": "ok"}
+    
+    # Если событие другого типа (например, callback_query), можно обработать отдельно
+    # Пока просто игнорируем
+    logger.info(f"Событие {event_type} не обрабатывается")
+    return {"status": "ignored"}
+
+async def send_max_message(chat_id: str, text: str):
+    """
+    Отправляет сообщение в указанный чат MAX.
+    Использует официальный API на домене platform-api2.max.ru.
+    """
+    if not MAX_BOT_TOKEN:
+        logger.error("MAX_BOT_TOKEN не задан, сообщение не отправлено")
+        return
+    
+    url = "https://platform-api2.max.ru/messages"
+    headers = {
+        "Authorization": MAX_BOT_TOKEN,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "chat_id": chat_id,
+        "text": text
+    }
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            response = await client.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            logger.info(f"Сообщение отправлено в чат {chat_id}, статус {response.status_code}")
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Ошибка HTTP при отправке в MAX: {e.response.status_code} - {e.response.text}")
+        except Exception as e:
+            logger.error(f"Ошибка при отправке сообщения в MAX: {e}")
 
 
 # ==========================================
