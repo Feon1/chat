@@ -10,7 +10,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from sentence_transformers import SentenceTransformer
 import numpy as np
-from light_embed import TextEmbedding
+# from light_embed import TextEmbedding
 
 # ---------- НАСТРОЙКА ЛОГГИРОВАНИЯ ----------
 logging.basicConfig(level=logging.INFO)
