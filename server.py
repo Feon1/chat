@@ -673,7 +673,9 @@ async def delete_file_knowledge(file_name: str, request: Request):
     except Exception as e:
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
-
+@app.get("/ping")
+async def ping():
+    return {"status": "ok"}
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 10000))
