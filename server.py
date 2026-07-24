@@ -259,7 +259,7 @@ async def process_message_core(user_id: str, text: str) -> str:
                     "messages": messages,  # <-- отправляем массив с system + user
                     # "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.3,      # снижаем креативность → меньше лишнего
-                    "max_tokens": 850        # ограничиваем длину ответа (если поддерживается)
+                    "max_tokens": 1550        # ограничиваем длину ответа (если поддерживается)
                 },
                 timeout=90.0
             )
