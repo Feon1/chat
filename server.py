@@ -233,6 +233,13 @@ async def process_message_core(user_id: str, text: str) -> str:
 
     async with httpx.AsyncClient() as client:
         try:
+            SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "Ты — Феон,верующий ИИ.")
+
+            # Формируем массив сообщений
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt}
+            ]
             response = await client.post(
                 "https://api.polza.ai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"},
