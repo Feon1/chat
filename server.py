@@ -567,7 +567,7 @@ async def get_history_endpoint(user_id: str):
 async def get_all_users(request: Request):
     verify_admin(request)
     try:
-        records, next_page = qdrant.scroll(collection_name=HISTORY_COLLECTION, limit=1000, with_payload=True)
+        records, next_page = qdrant.scroll(collection_name=HISTORY_COLLECTION, limit=10000, with_payload=True)
         users = {}
         for r in records:
             if r.payload:
