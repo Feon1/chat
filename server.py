@@ -64,6 +64,17 @@ JINA_API_URL = "https://api.jina.ai/v1/embeddings"
 
 qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 
+SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "Ты — Феон, верующий ИИ.")
+
+# В начале файла
+try:
+    with open("system_prompt.txt", "r", encoding="utf-8") as f:
+        SYSTEM_PROMPT = f.read().strip()
+        print(f"✅ Системный промпт загружен из файла: {SYSTEM_PROMPT[:50]}...")
+except FileNotFoundError:
+    SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "Ты — Феон, верующий ИИ.")
+    print("ℹ️ Используется SYSTEM_PROMPT из переменной окружения")
+
 @app.on_event("startup")
 async def startup_event():
     """Создаем коллекции, индексы и устанавливаем вебхук Telegram при запуске"""
@@ -226,14 +237,14 @@ async def process_message_core(user_id: str, text: str) -> str:
     if context:
         prompt += f"Контекст из базы знаний:\n{context}\n\n"
 
-    # 🔥 Жёсткая инструкция – без воды
+    # 🔥 Жёсткая инструкция 
     prompt += f"Вопрос пользователя: {text}\n\n"
-    prompt += "Ответь по существу, с рассуждениями, советами, анализом и рефлексией. Максимум 6 предложений в соответсвии с SYSTEM_PROMPT "
-    prompt += "Если вопрос простой – дай прямой ответ 3 предложения в соответсвии с SYSTEM_PROMPT . Не повторяй историю диалога."
+    prompt += "Ответь по существу, с рассуждениями, советами, анализом и рефлексией. Максимум 6 предложений в соответствии с SYSTEM_PROMPT "
+    prompt += "Если вопрос простой – дай прямой ответ 3 предложения в соответствии с SYSTEM_PROMPT . Не повторяй историю диалога."
 
     async with httpx.AsyncClient() as client:
         try:
-            SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "Ты — Феон,верующий ИИ.")
+            # SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "Ты — Феон,верующий ИИ.")
 
             # Формируем массив сообщений
             messages = [
@@ -245,7 +256,8 @@ async def process_message_core(user_id: str, text: str) -> str:
                 headers={"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"},
                 json={
                     "model": "deepseek/deepseek-v4-flash",
-                    "messages": [{"role": "user", "content": prompt}],
+                    "messages": messages,  # <-- отправляем массив с system + user
+                    # "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.3,      # снижаем креативность → меньше лишнего
                     "max_tokens": 850        # ограничиваем длину ответа (если поддерживается)
                 },
@@ -680,6 +692,34 @@ async def delete_file_knowledge(file_name: str, request: Request):
     except Exception as e:
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
+        
+@app.post("/update_system_prompt")
+async def update_system_prompt(request: Request):
+    """Обновляет системный промпт на лету. Требуется x-admin-token."""
+    token = request.headers.get("x-admin-token")
+    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="Неверный токен администратора")
+    
+    try:
+        body = await request.json()
+        new_prompt = body.get("prompt", "").strip()
+        if not new_prompt:
+            raise HTTPException(status_code=400, detail="Поле 'prompt' не может быть пустым")
+        
+        global SYSTEM_PROMPT
+        SYSTEM_PROMPT = new_prompt
+        
+        # Сохраняем в файл для сохранения после перезапуска
+        with open("system_prompt.txt", "w", encoding="utf-8") as f:
+            f.write(new_prompt)
+        
+        return JSONResponse({
+            "status": "success",
+            "message": "Системный промпт обновлён",
+            "new_prompt": new_prompt
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))        
         
 @app.api_route("/ping", methods=["GET", "HEAD"])
 async def ping():
