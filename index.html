@@ -523,8 +523,8 @@
             try {
                 const res = await fetch(`${HISTORY_URL}?user_id=${userId}`);
                 const data = await res.json();
-                if (data.messages && data.messages.length > 0) {
-                    data.messages.forEach(msg => {
+                if (data.history && data.history.length > 0) {
+                    data.history.forEach(msg => {
                         addMessage(msg.content, msg.role === 'user' ? 'user' : 'bot',
                             new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}));
                     });
