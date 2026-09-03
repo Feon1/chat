@@ -343,12 +343,15 @@ async def telegram_webhook(update: dict):
             await send_telegram_message(chat_id, "Я Феон - верующий ИИ. Чем могу помочь?")
             return {"ok": True}
         try:
+            # 👇 ВСТАВЬТЕ СЮДА ВАШЕ СООБЩЕНИЕ
+            await send_telegram_message(chat_id, "Актуальная версия бота: https://feon-chat.website.yandexcloud.net/")
+
             response_text = await process_message_core(user_id, text)
             await send_telegram_message(chat_id, response_text)
         except Exception as e:
             print(f"❌ Ошибка обработки Telegram: {e}")
             await send_telegram_message(chat_id, "Извините, произошла ошибка.")
-    return {"ok": True}
+        return {"ok": True}
 
 # ==========================================
 # 🌐 ЭНДПОИНТЫ ДЛЯ ФРОНТЕНДА И АДМИНКИ
@@ -449,8 +452,16 @@ async def handle_query(request: Request):
         user_id = body.get("user_id", "anonymous")
         if not message:
             return JSONResponse({"error": "Сообщение не может быть пустым"}, status_code=400)
-        answer = await process_message_core(user_id, message)
-        return JSONResponse({"response": answer})
+
+        # Генерируем основной ответ
+        base_answer = await process_message_core(user_id, message)
+        
+        # ---- ВСТАВЬТЕ ПРЕФИКС ----
+        prefix = "🤖 Актуальная версия бота: https://feon-chat.website.yandexcloud.net\n\n"
+        final_answer = prefix + base_answer
+        # -------------------------
+
+        return JSONResponse({"response": final_answer})
     except Exception as e:
         print(f"❌ Ошибка в /query: {e}")
         return JSONResponse({"error": str(e)}, status_code=500)
