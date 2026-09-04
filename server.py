@@ -319,16 +319,18 @@ async def process_message_core(user_id: str, text: str) -> str:
 # ==========================================
 # 📱 TELEGRAM ИНТЕГРАЦИЯ
 # ==========================================
-async def send_telegram_message(chat_id: int, text: str):
-    if not TELEGRAM_BOT_TOKEN:
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(url, json=payload)
-        except Exception as e:
-            print(f"❌ Ошибка отправки в Telegram: {e}")
+async def send_telegram_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=payload) as resp:
+            result = await resp.json()
+            if not result.get("ok"):
+                print(f"❌ Ошибка Telegram API: {result}")
+                # можно выбросить исключение, чтобы обработать в try
+                raise Exception(f"Telegram API error: {result}")
+            print(f"✅ Ответ от Telegram: {result}")
+            return result
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(update: dict):
