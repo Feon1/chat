@@ -343,11 +343,12 @@ async def telegram_webhook(update: dict):
             await send_telegram_message(chat_id, "Я Феон - верующий ИИ. Чем могу помочь?")
             return {"ok": True}
         try:
-            # 👇 ВСТАВЬТЕ СЮДА ВАШЕ СООБЩЕНИЕ
-            await send_telegram_message(chat_id, "Актуальная версия бота: https://max.ru/se13654625_bot")
-
             response_text = await process_message_core(user_id, text)
-            await send_telegram_message(chat_id, response_text)
+            final_text = f"Актуальная версия бота: https://max.ru/se13654625_bot\n\n{response_text}"
+            await send_telegram_message(chat_id, final_text)
+
+            #response_text = await process_message_core(user_id, text)
+            #await send_telegram_message(chat_id, response_text)
         except Exception as e:
             print(f"❌ Ошибка обработки Telegram: {e}")
             await send_telegram_message(chat_id, "Извините, произошла ошибка.")
