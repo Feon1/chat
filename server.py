@@ -344,7 +344,7 @@ async def telegram_webhook(update: dict):
             return {"ok": True}
         try:
             # 👇 ВСТАВЬТЕ СЮДА ВАШЕ СООБЩЕНИЕ
-            await send_telegram_message(chat_id, "Актуальная версия бота: https://feon-chat.website.yandexcloud.net/")
+            await send_telegram_message(chat_id, "Актуальная версия бота: https://max.ru/se13654625_bot")
 
             response_text = await process_message_core(user_id, text)
             await send_telegram_message(chat_id, response_text)
