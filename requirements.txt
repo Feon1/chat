@@ -20,5 +20,6 @@ numpy
 # light-embed
 fastembed
 certifi>=2024.7.4
+aiohttp>=3.8.0
 
 
