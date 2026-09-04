@@ -44,7 +44,9 @@ app.add_middleware(
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+if not TELEGRAM_TOKEN:
+    raise ValueError("TELEGRAM_TOKEN не задан в переменных окружения")
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 JINA_API_KEY = os.getenv("JINA_API_KEY")
@@ -326,10 +328,9 @@ async def send_telegram_message(chat_id, text):
         async with session.post(url, json=payload) as resp:
             result = await resp.json()
             if not result.get("ok"):
-                print(f"❌ Ошибка Telegram API: {result}")
-                # можно выбросить исключение, чтобы обработать в try
-                raise Exception(f"Telegram API error: {result}")
-            print(f"✅ Ответ от Telegram: {result}")
+                print(f"❌ Ошибка Telegram: {result}")
+            else:
+                print(f"✅ Отправлено: {result}")
             return result
 
 @app.post("/webhook/telegram")
