@@ -42,6 +42,16 @@ app.add_middleware(
 # ==========================================
 # ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ И НАСТРОЙКИ
 # ==========================================
+
+
+
+# ===== НАСТРОЙКИ YANDEX CLOUD =====
+YANDEX_FUNCTION_URL = os.getenv("YANDEX_FUNCTION_URL", "https://functions.yandexcloud.net/d4es1c8b5c36mgeblhfg")
+YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
+
+if not YANDEX_API_KEY:
+    print("⚠️ ВНИМАНИЕ: YANDEX_API_KEY не задан. Вызовы Yandex Cloud будут падать.")
+    
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
@@ -319,6 +329,70 @@ async def process_message_core(user_id: str, text: str) -> str:
     await save_to_history(user_id, "bot", answer)
     return answer
 
+async def call_yandex_function(message_text: str, user_id: str) -> str:
+    """
+    Отправляет сообщение в Yandex Cloud Function и возвращает её ответ.
+    
+    :param message_text: Текст сообщения от пользователя
+    :param user_id: ID пользователя (для контекста в Yandex-боте)
+    :return: Текст ответа от Yandex-бота
+    """
+    if not YANDEX_API_KEY:
+        return "❌ Ошибка: YANDEX_API_KEY не настроен на сервере."
+
+    payload = {
+        "message": message_text,
+        "user_id": user_id,
+    }
+    headers = {
+        "Authorization": f"Api-Key {YANDEX_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    print(f"📡 Отправляем в Yandex: message='{message_text[:50]}...', user_id={user_id}")
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=30)  # 30 сек — на случай долгого ответа
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(YANDEX_FUNCTION_URL, json=payload, headers=headers) as resp:
+                raw = await resp.text()
+                print(f"📥 Ответ Yandex (HTTP {resp.status}): {raw[:300]}")
+
+                if resp.status != 200:
+                    return f"❌ Yandex вернул ошибку HTTP {resp.status}. Попробуйте позже."
+
+                # Yandex Functions обычно оборачивают ответ в base64-encoded body
+                try:
+                    data = json.loads(raw)
+                    # Если это обёртка API Gateway — внутри есть поле 'body'
+                    if "body" in data and isinstance(data["body"], str):
+                        inner = json.loads(data["body"])
+                    else:
+                        inner = data
+                except json.JSONDecodeError:
+                    return "❌ Yandex вернул некорректный JSON."
+
+                # Пытаемся достать ответ из разных возможных полей
+                answer = (
+                    inner.get("response")
+                    or inner.get("answer")
+                    or inner.get("text")
+                    or inner.get("message")
+                )
+
+                if not answer:
+                    print(f"⚠️ Не найдено поле с ответом. Структура: {inner}")
+                    return "❌ Yandex вернул пустой ответ."
+
+                return answer
+
+    except aiohttp.ClientError as e:
+        print(f"❌ Сетевая ошибка при вызове Yandex: {e}")
+        return "❌ Не удалось связаться с Yandex Cloud."
+    except Exception as e:
+        print(f"❌ Неизвестная ошибка при вызове Yandex: {e}")
+        return "❌ Внутренняя ошибка при обращении к Yandex."
+
 # ==========================================
 # 📱 TELEGRAM ИНТЕГРАЦИЯ
 # ==========================================
@@ -343,29 +417,30 @@ async def telegram_webhook(update: dict):
         if "text" not in message:
             return {"ok": True}
         text = message["text"].strip()
+
         if text.lower() == "/start":
             await send_telegram_message(chat_id, "Я Феон - верующий ИИ. Чем могу помочь?")
             return {"ok": True}
+
         try:
-            # ---- ЛОГИРОВАНИЕ ДЛЯ ОТЛАДКИ ----
-            print(f"🔍 Начинаем обработку для chat_id={chat_id}, text='{text}'")
-            
-            # Вызываем основную логику
-            response_text = await process_message_core(user_id, text)
-            print(f"✅ process_message_core вернула: {response_text}")  # посмотрим, что вернулось
-            
-            # Формируем итоговое сообщение
+            print(f"🔍 Обработка для chat_id={chat_id}, text='{text}'")
+
+            # ===== ВЫЗОВ YANDEX CLOUD FUNCTION =====
+            response_text = await call_yandex_function(text, user_id)
+            print(f"✅ Yandex вернул: {response_text[:100]}...")
+
+            # ===== ФОРМИРУЕМ ФИНАЛЬНОЕ СООБЩЕНИЕ =====
             final_text = f"Актуальная версия бота: https://max.ru/se13654625_bot\n\n{response_text}"
-            print(f"📤 Отправляем финальное сообщение: {final_text[:100]}...")  # первые 100 символов
-            
-            # Отправляем
+
             await send_telegram_message(chat_id, final_text)
-            print("✅ Сообщение успешно отправлено")
+            print("✅ Сообщение отправлено в Telegram")
+
         except Exception as e:
             print(f"❌ Ошибка обработки Telegram: {e}")
             import traceback
-            traceback.print_exc()  # печатаем полный стек
+            traceback.print_exc()
             await send_telegram_message(chat_id, "Извините, произошла ошибка.")
+
         return {"ok": True}
 
 # ==========================================
