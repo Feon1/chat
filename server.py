@@ -393,6 +393,39 @@ async def call_yandex_function(message_text: str, user_id: str) -> str:
         print(f"❌ Неизвестная ошибка при вызове Yandex: {e}")
         return "❌ Внутренняя ошибка при обращении к Yandex."
 
+
+async def process_and_reply(chat_id: int, user_id: str, text: str):
+    """
+    Фоновая задача: вызывает Yandex-функцию и отправляет ответ в Telegram.
+    Запускается через asyncio.create_task, чтобы не блокировать webhook.
+    """
+    try:
+        print(f"🧵 [BG] Начинаем фоновую обработку для chat_id={chat_id}")
+
+        # 1. Отправляем пользователю сообщение «думаю»
+        await send_telegram_message(
+            chat_id,
+            "⏳ Думаю над ответом, это может занять до минуты. Пожалуйста, подождите..."
+        )
+
+        # 2. Ждём ответ от Yandex
+        response_text = await call_yandex_function(text, user_id)
+        print(f"🧵 [BG] Получен ответ от Yandex: {response_text[:100]}...")
+
+        # 3. Отправляем финальный ответ
+        final_text = f"Актуальная версия бота: https://max.ru/se13654625_bot\n\n{response_text}"
+        await send_telegram_message(chat_id, final_text)
+        print(f"🧵 [BG] Ответ отправлен в чат {chat_id}")
+
+    except Exception as e:
+        print(f"❌ [BG] Ошибка фоновой обработки: {e}")
+        import traceback
+        traceback.print_exc()
+        try:
+            await send_telegram_message(chat_id, "Извините, произошла ошибка при обработке.")
+        except Exception:
+            pass
+
 # ==========================================
 # 📱 TELEGRAM ИНТЕГРАЦИЯ
 # ==========================================
@@ -422,26 +455,11 @@ async def telegram_webhook(update: dict):
             await send_telegram_message(chat_id, "Я Феон - верующий ИИ. Чем могу помочь?")
             return {"ok": True}
 
-        try:
-            print(f"🔍 Обработка для chat_id={chat_id}, text='{text}'")
-
-            # ===== ВЫЗОВ YANDEX CLOUD FUNCTION =====
-            response_text = await call_yandex_function(text, user_id)
-            print(f"✅ Yandex вернул: {response_text[:100]}...")
-
-            # ===== ФОРМИРУЕМ ФИНАЛЬНОЕ СООБЩЕНИЕ =====
-            final_text = f"Актуальная версия бота: https://max.ru/se13654625_bot\n\n{response_text}"
-
-            await send_telegram_message(chat_id, final_text)
-            print("✅ Сообщение отправлено в Telegram")
-
-        except Exception as e:
-            print(f"❌ Ошибка обработки Telegram: {e}")
-            import traceback
-            traceback.print_exc()
-            await send_telegram_message(chat_id, "Извините, произошла ошибка.")
-
+        # Запускаем фоновую обработку — webhook сразу отвечает Telegram
+        asyncio.create_task(process_and_reply(chat_id, user_id, text))
         return {"ok": True}
+
+    return {"ok": True}
 
 # ==========================================
 # 🌐 ЭНДПОИНТЫ ДЛЯ ФРОНТЕНДА И АДМИНКИ
