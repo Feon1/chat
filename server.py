@@ -413,7 +413,7 @@ async def process_and_reply(chat_id: int, user_id: str, text: str):
         print(f"🧵 [BG] Получен ответ от Yandex: {response_text[:100]}...")
 
         # 3. Отправляем финальный ответ
-        final_text = f"Актуальная версия бота: https://max.ru/se13654625_bot\n\n{response_text}"
+        final_text = f"{response_text}\n\nАктуальная версия бота: https://max.ru/se13654625_bot"
         await send_telegram_message(chat_id, final_text)
         print(f"🧵 [BG] Ответ отправлен в чат {chat_id}")
 
