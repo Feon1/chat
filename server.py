@@ -124,82 +124,112 @@ def verify_admin(request: Request):
 
 async def fetch_telegram_post(url: str) -> str:
     """
-    Извлекает текст поста из Telegram-канала или группы.
-    Работает только для ПУБЛИЧНЫХ каналов через t.me/s/.
+    Извлекает текст КОНКРЕТНОГО поста из публичного Telegram-канала.
+    Поддерживает форматы:
+      https://t.me/channel/123
+      https://t.me/s/channel/123
+      https://telegram.me/channel/123
+      ... + любые query-параметры (?single, ?embed и т.п.)
     Приватные каналы (t.me/c/...) не поддерживаются.
     """
     print(f"📱 [TG] Обрабатываем ссылку: {url}")
 
-    # Форматы:
-    #   https://t.me/durov/123
-    #   https://t.me/s/durov/123
-    #   https://t.me/c/1234567890/123  (приватный — не поддерживается)
-    match = re.search(r't\.me/(?:s/)?([^/]+)/(\d+)', url)
+    # Убираем query-параметры, хвостовые слеши
+    url_clean = url.split("?")[0].split("#")[0].rstrip("/")
+
+    match = re.search(
+        r'(?:t\.me|telegram\.me)/(?:s/)?([^/]+)/(\d+)',
+        url_clean
+    )
     if not match:
         print(f"⚠️ [TG] Не удалось распознать URL: {url}")
         return ""
 
-    channel = match.group(1)
-    post_id = match.group(2)
+    channel, post_id = match.group(1), match.group(2)
 
-    # Приватный канал
     if channel == "c":
-        print(f"⚠️ [TG] Приватный канал, содержимое недоступно")
+        print("⚠️ [TG] Приватный канал — содержимое недоступно")
         return ""
 
-    # Публичный канал — используем веб-превью
-    web_url = f"https://t.me/s/{channel}/{post_id}"
-    print(f"🌐 [TG] Загружаем веб-превью: {web_url}")
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    }
 
-    try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0 Safari/537.36"
-            )
-        }
-        async with httpx.AsyncClient(
-            timeout=15.0,
-            follow_redirects=True,
-            headers=headers,
-            verify=False,
-        ) as client:
-            response = await client.get(web_url)
-            response.raise_for_status()
-            print(f"✅ [TG] HTTP {response.status_code}, длина {len(response.text)}")
+    # Пробуем два варианта — превью канала и embed-виджет
+    candidate_urls = [
+        f"https://t.me/s/{channel}/{post_id}",
+        f"https://t.me/{channel}/{post_id}?embed=1&mode=tme",
+    ]
 
-            soup = BeautifulSoup(response.text, "lxml")
+    async with httpx.AsyncClient(
+        timeout=20.0,
+        follow_redirects=True,
+        headers=headers,
+        verify=False,
+    ) as client:
+        for web_url in candidate_urls:
+            try:
+                print(f"🌐 [TG] Загружаем: {web_url}")
+                response = await client.get(web_url)
+                if response.status_code != 200:
+                    print(f"⚠️ [TG] HTTP {response.status_code} от {web_url}")
+                    continue
 
-            # Telegram использует класс .tgme_widget_message_text для текста поста
-            message_texts = soup.select(".tgme_widget_message_text")
+                soup = BeautifulSoup(response.text, "lxml")
 
-            if not message_texts:
-                print(f"⚠️ [TG] Не найден текст поста")
-                return ""
+                target = f"{channel}/{post_id}"
+                collected = []
 
-            # Собираем тексты всех постов на странице превью
-            all_texts = []
-            for msg in message_texts:
-                txt = msg.get_text(separator="\n", strip=True)
-                if txt:
-                    all_texts.append(txt)
+                # 1) Ищем ИМЕННО нужный пост по data-post
+                for post in soup.select(".tgme_widget_message"):
+                    data_post = post.get("data-post", "")
+                    if data_post == target or data_post.endswith(f"/{post_id}"):
+                        # Основной текст
+                        txt_el = post.select_one(".tgme_widget_message_text")
+                        if txt_el:
+                            collected.append(txt_el.get_text(separator="\n", strip=True))
+                        # Подпись к фото/видео/док
+                        cap_el = post.select_one(".tgme_widget_message_caption")
+                        if cap_el:
+                            collected.append(cap_el.get_text(separator="\n", strip=True))
+                        break
 
-            if not all_texts:
-                return ""
+                # 2) Fallback — если структура поменялась, берём первый текстовый блок
+                if not collected:
+                    for el in soup.select(
+                        ".tgme_widget_message_text, .tgme_widget_message_caption"
+                    ):
+                        txt = el.get_text(separator="\n", strip=True)
+                        if txt:
+                            collected.append(txt)
+                            break  # только первый, чтобы не склеивать соседние посты
 
-            result_text = "\n\n---\n\n".join(all_texts)
+                if not collected:
+                    print("⚠️ [TG] Текст поста не найден в HTML")
+                    continue
 
-            MAX_LEN = 5000
-            if len(result_text) > MAX_LEN:
-                result_text = result_text[:MAX_LEN] + "...\n[Текст обрезан]"
+                result = "\n\n".join(collected)
+                result = re.sub(r'\n{3,}', '\n\n', result).strip()
 
-            print(f"✅ [TG] Извлечено {len(result_text)} символов")
-            return result_text
+                MAX_LEN = 5000
+                if len(result) > MAX_LEN:
+                    result = result[:MAX_LEN] + "...\n[Текст обрезан]"
 
-    except Exception as e:
-        print(f"❌ [TG] Ошибка загрузки: {e}")
-        return ""
+                print(f"✅ [TG] Извлечено {len(result)} символов из {channel}/{post_id}")
+                return result
+
+            except Exception as e:
+                print(f"⚠️ [TG] Ошибка загрузки {web_url}: {e}")
+                continue
+
+    print("❌ [TG] Все попытки извлечь пост провалились")
+    return ""
 
 
 async def fetch_vk_post(url: str) -> str:
@@ -648,14 +678,18 @@ async def process_and_reply(chat_id: int, user_id: str, text: str):
                 text_clean = "Ознакомься с содержимым по ссылке и дай развёрнутый ответ."
 
             if page_text:
-                truncated = page_text[:3000] + ("..." if len(page_text) > 3000 else "")
+                truncated = page_text[:4000] + ("..." if len(page_text) > 4000 else "")
                 page_context = (
-                    f"\n\n[Содержимое страницы, на которую ссылался пользователь]:\n{truncated}"
+                    "\n\n=== СОДЕРЖИМОЕ ССЫЛКИ, КОТОРУЮ ПРИСЛАЛ ПОЛЬЗОВАТЕЛЬ ===\n"
+                    f"{truncated}\n"
+                    "=== КОНЕЦ СОДЕРЖИМОГО ===\n\n"
+                    "Ответь на вопрос пользователя, опираясь на это содержимое."
                 )
-                print(f"📄 [BG] Извлечено {len(page_text)} символов, добавлено {len(page_context)} символов контекста")
             else:
-                print(f"⚠️ [BG] Не удалось извлечь содержимое ссылки {url}")
-                page_context = "\n\n[Не удалось загрузить содержимое страницы. Ответь по общим знаниям.]"
+                page_context = (
+                    "\n\n[Не удалось загрузить содержимое ссылки. "
+                    "Честно скажи об этом пользователю и ответь по общим знаниям.]"
+                )
 
         # 3. Формируем payload: чистый текст (без URL) + содержимое страницы
         payload_text = text_clean + page_context
