@@ -1039,6 +1039,39 @@ async def delete_file_knowledge(file_name: str, request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/parse_url")
+async def parse_url_endpoint(request: Request):
+    """
+    Внутренний эндпоинт для Yandex Cloud Function.
+    Принимает {"url": "..."} → возвращает {"text": "...", "url": "..."}.
+    Защищён общим секретом, чтобы снаружи не пользовались.
+    """
+    # Простая защита: общий токен между Render и Yandex
+    parser_token = os.getenv("PARSER_TOKEN")
+    if parser_token:
+        incoming = request.headers.get("x-parser-token")
+        if incoming != parser_token:
+            raise HTTPException(status_code=401, detail="invalid parser token")
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid json"}, status_code=400)
+
+    url = (body.get("url") or "").strip()
+    if not url or not url.startswith(("http://", "https://")):
+        return JSONResponse({"error": "url is required"}, status_code=400)
+
+    print(f"🌐 [PARSE_URL] Запрос из Yandex: {url}")
+    text = await fetch_url_content(url)
+    print(f"🌐 [PARSE_URL] Отдаём {len(text)} символов")
+
+    return JSONResponse({
+        "url": url,
+        "text": text,
+        "ok": bool(text),
+    })
+
 @app.post("/update_system_prompt")
 async def update_system_prompt(request: Request):
     token = request.headers.get("x-admin-token")
