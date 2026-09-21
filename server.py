@@ -219,7 +219,7 @@ async def fetch_telegram_post(url: str) -> str:
                 result = "\n\n".join(collected)
                 result = re.sub(r'\n{3,}', '\n\n', result).strip()
 
-                MAX_LEN = 5000
+                MAX_LEN = 15000
                 if len(result) > MAX_LEN:
                     result = result[:MAX_LEN] + "...\n[Текст обрезан]"
 
@@ -344,7 +344,7 @@ async def fetch_url_content(url: str) -> str:
                 print("⚠️ [FETCH] Обнаружен UI-мусор")
                 return ""
 
-            MAX_LEN = 5000
+            MAX_LEN = 15000
             if len(cleaned) > MAX_LEN:
                 cleaned = cleaned[:MAX_LEN] + "...\n[Текст обрезан]"
 
@@ -707,10 +707,22 @@ async def process_and_reply(chat_id: int, user_id: str, text: str):
 
         # 3. Убираем URL из текста пользователя
         text_clean = re.sub(r'https?://\S+', '', text).strip()
+        # 3. Убираем URL из текста пользователя
+        text_clean = re.sub(r'https?://\S+', '', text).strip()
         if not text_clean:
             text_clean = "Проанализируй содержимое страницы по ссылке и дай развёрнутый ответ."
 
-        # 4. Формируем payload с маркером [RENDER_LINK]
+# 3.1. Если ссылка была, но контент не извлекли — предупреждаем пользователя
+        if urls and not page_text:
+            print(f"⚠️ [BG] Контент по ссылке не извлечён, уведомляем пользователя")
+            await send_telegram_message(
+                chat_id,
+                "⚠️ Не удалось загрузить содержимое по ссылке "
+                "(приватный канал, удалённый пост, пейволл или сайт с защитой). "
+                "Отвечу по общим знаниям."
+            )
+
+# 4. Формируем payload с маркером [RENDER_LINK]
         if page_text:
             # Убираем протоколы, чтобы Yandex не активировал свою ветку
             # парсинга ссылок (регекс r'https?://[^\s]+' ничего не найдёт)
