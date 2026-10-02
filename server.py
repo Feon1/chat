@@ -709,7 +709,7 @@ async def process_and_reply(chat_id: int, user_id: str, text: str):
         text_clean = re.sub(r'https?://\S+', '', text).strip()
         # 3. Убираем URL из текста пользователя
         text_clean = re.sub(r'https?://\S+', '', text).strip()
-        if not text_clean:
+        if not text_clean and urls:
             text_clean = "Проанализируй содержимое страницы по ссылке и дай развёрнутый ответ."
 
 # 3.1. Если ссылка была, но контент не извлекли — предупреждаем пользователя
@@ -723,13 +723,17 @@ async def process_and_reply(chat_id: int, user_id: str, text: str):
             )
 
 # 4. Формируем payload с маркером [RENDER_LINK]
-        if page_text:
-            # Убираем протоколы, чтобы Yandex не активировал свою ветку
-            # парсинга ссылок (регекс r'https?://[^\s]+' ничего не найдёт)
+        if not urls:
+    # Ссылок не было — отправляем чистый текст, без маркера и заглушек
+            payload_text = text
+            print(f"📤 [BG] Без ссылки — простой текст ({len(payload_text)} симв.)")
+
+        elif page_text:
+    # Ссылка была и успешно распарсилась
             page_text_safe = (
                 page_text
-                .replace("https://", "")
-                .replace("http://", "")
+                    .replace("https://", "")
+                    .replace("http://", "")
             )
             payload_text = (
                 f"{RENDER_LINK_MARKER}\n"
@@ -737,7 +741,9 @@ async def process_and_reply(chat_id: int, user_id: str, text: str):
                 f"Содержимое страницы, которую прислал пользователь:\n"
                 f"{page_text_safe}"
             )
+
         else:
+    # Ссылка была, но не распарсилась
             payload_text = (
                 f"{RENDER_LINK_MARKER}\n"
                 f"{text_clean}\n\n"
