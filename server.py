@@ -467,6 +467,17 @@ async def save_to_history(user_id: str, role: str, content: str):
         safe_role = str(role).strip()
         safe_content = str(content).strip() if content is not None else ""
 
+        # Чистим старые заглушки из Render (на случай, если что-то прилетит снаружи)
+        safe_content = safe_content.replace(
+            "[Содержимое страницы загрузить не удалось. Ответь по общим знаниям.]", ""
+        ).strip()
+        safe_content = safe_content.replace(
+            "Ознакомься с содержимым по ссылке и дай развёрнутый ответ.", ""
+        ).strip()
+
+        if not safe_content:
+            return
+
         normalized_content = ' '.join(safe_content.split())
         content_key = f"{safe_user_id}_{safe_role}_{normalized_content}"
         point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, content_key))
