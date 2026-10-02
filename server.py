@@ -606,6 +606,7 @@ async def call_yandex_function(message_text: str, user_id: str) -> str:
     payload = {
         "message": message_text,
         "user_id": user_id,
+        "platform": "Telegram",
     }
     headers = {
         "Content-Type": "application/json",
