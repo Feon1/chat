@@ -284,6 +284,7 @@ async def fetch_vk_post(url: str) -> str:
     return ""
 
 
+
 async def fetch_url_content(url: str) -> str:
     """Извлекает основной текст со страницы по URL."""
     print(f"🌐 [FETCH] Загружаем: {url}")
@@ -323,12 +324,45 @@ async def fetch_url_content(url: str) -> str:
 
             soup = BeautifulSoup(response.text, "lxml")
 
-            for element in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
+            # Удаляем служебные теги
+            for element in soup([
+                "script", "style", "nav", "footer", "header", "aside", "noscript",
+                "button", "form", "iframe", "svg",
+            ]):
                 element.decompose()
+
+            # Удаляем типичные UI-блоки по CSS-селекторам
+            UI_SELECTORS = [
+                ".share", ".sharing", ".social", ".social-share", ".share-buttons",
+                "[class*='share']", "[class*='social']",
+                "[class*='toolbar']", "[class*='comment']", "[class*='subscribe']",
+                "[class*='sidebar']", "[class*='related']", "[class*='recommend']",
+                "[class*='cookie']", "[class*='banner']", "[class*='advert']",
+            ]
+            for selector in UI_SELECTORS:
+                for el in soup.select(selector):
+                    el.decompose()
 
             text = soup.get_text(separator="\n", strip=True)
             lines = [line.strip() for line in text.splitlines() if line.strip()]
             cleaned = "\n".join(lines)
+
+            # Убираем очень короткие строки (шум)
+            cleaned = "\n".join(
+                line for line in cleaned.splitlines()
+                if len(line.strip()) > 3
+            )
+
+            # Мягкая фильтрация UI-строк — удаляем строку, но НЕ всю страницу
+            NOISE_LINES = {
+                "поделиться", "вернуться к странице", "показать список",
+                "посты сообщества", "читать далее", "комментировать",
+                "подписаться", "репост",
+            }
+            cleaned = "\n".join(
+                line for line in cleaned.splitlines()
+                if line.strip().lower() not in NOISE_LINES
+            )
 
             if len(cleaned) < 300:
                 print(f"⚠️ [FETCH] Текст слишком короткий ({len(cleaned)})")
@@ -339,16 +373,11 @@ async def fetch_url_content(url: str) -> str:
                 print(f"⚠️ [FETCH] Мало букв ({letters}/{len(cleaned)})")
                 return ""
 
-            ui_markers = ["поделиться", "вернуться к странице", "показать список", "посты сообщества"]
-            if any(word in cleaned.lower() for word in ui_markers):
-                print("⚠️ [FETCH] Обнаружен UI-мусор")
-                return ""
-
             MAX_LEN = 15000
             if len(cleaned) > MAX_LEN:
                 cleaned = cleaned[:MAX_LEN] + "...\n[Текст обрезан]"
 
-            print(f"✅ [FETCH] Извлечено {len(cleaned)} символов")
+            print(f"✅ [FETCH] Текст прошёл проверки ({len(cleaned)} символов)")
             return cleaned
 
     except Exception as e:
