@@ -451,6 +451,7 @@ async def startup_event():
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
             f"?url={WEBHOOK_URL}"
             f"&allowed_updates={_json.dumps(allowed)}"
+            f"&drop_pending_updates=true"    # ← добавить
         )
 
         async with httpx.AsyncClient() as client:
@@ -774,10 +775,15 @@ async def process_and_reply(chat_id: int, user_id: str, text: str):
             )
 
 # 4. Формируем payload с маркером [RENDER_LINK]
+        
         if not urls:
-    # Ссылок не было — отправляем чистый текст, без маркера и заглушек
-            payload_text = text
-            print(f"📤 [BG] Без ссылки — простой текст ({len(payload_text)} симв.)")
+    # Если текст длинный — ставим маркер, чтобы Yandex не уходил в буфер
+            if len(text) > 1900:
+                payload_text = f"{RENDER_LINK_MARKER}\n{text}"
+                print(f"📤 [BG] Длинный текст без ссылки — с маркером ({len(payload_text)} симв.)")
+            else:
+                payload_text = text
+                print(f"📤 [BG] Без ссылки — простой текст ({len(payload_text)} симв.)")
 
         elif page_text:
     # Ссылка была и успешно распарсилась
@@ -825,17 +831,43 @@ async def process_and_reply(chat_id: int, user_id: str, text: str):
 # ==========================================
 # 📱 TELEGRAM ИНТЕГРАЦИЯ
 # ==========================================
+
 async def send_telegram_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload) as resp:
-            result = await resp.json()
-            if not result.get("ok"):
-                print(f"❌ Ошибка Telegram: {result}")
+    """Отправляет сообщение, автоматически разбивая длинные тексты."""
+    MAX_LEN = 4000  # с запасом от лимита 4096
+    parts = []
+    if len(text) <= MAX_LEN:
+        parts = [text]
+    else:
+        # Режем по абзацам, чтобы не рвать предложения
+        paragraphs = text.split("\n\n")
+        current = ""
+        for p in paragraphs:
+            if len(current) + len(p) + 2 <= MAX_LEN:
+                current += (("\n\n" if current else "") + p)
             else:
-                print(f"✅ Отправлено: message_id={result.get('result', {}).get('message_id')}")
-            return result
+                if current:
+                    parts.append(current)
+                # Если один абзац больше лимита — режем жёстко
+                while len(p) > MAX_LEN:
+                    parts.append(p[:MAX_LEN])
+                    p = p[MAX_LEN:]
+                current = p
+        if current:
+            parts.append(current)
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    async with aiohttp.ClientSession() as session:
+        for i, part in enumerate(parts, 1):
+            prefix = f"[{i}/{len(parts)}] " if len(parts) > 1 else ""
+            payload = {"chat_id": chat_id, "text": prefix + part}
+            async with session.post(url, json=payload) as resp:
+                result = await resp.json()
+                if not result.get("ok"):
+                    print(f"❌ Ошибка Telegram (часть {i}): {result}")
+                else:
+                    print(f"✅ Отправлено: message_id={result.get('result', {}).get('message_id')}")
+    return True
 
 
 
