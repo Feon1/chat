@@ -896,38 +896,38 @@ async def telegram_webhook(update: dict):
     
     
     if "channel_post" in update:
-    post = update["channel_post"]
-    from_info = post.get("from", {}) or {}
+        post = update["channel_post"]
+        from_info = post.get("from", {}) or {}
 
     # Игнорируем посты от настоящих ботов
-    if from_info.get("is_bot") and from_info.get("username") not in ("Channel_Bot",):
-        print("⏭️ [CHANNEL] Пост от бота — игнорируем")
-        return {"ok": True}
+        if from_info.get("is_bot") and from_info.get("username") not in ("Channel_Bot",):
+            print("⏭️ [CHANNEL] Пост от бота — игнорируем")
+            return {"ok": True}
 
-    chat_id = post["chat"]["id"]
-    chat_title = post["chat"].get("title", "канал")
-    user_id = f"tg_channel_{chat_id}"
+        chat_id = post["chat"]["id"]
+        chat_title = post["chat"].get("title", "канал")
+        user_id = f"tg_channel_{chat_id}"
 
     # Текст может быть в "text" (обычный пост)
     # или в "caption" (подпись к фото/видео)
-    text = (post.get("text") or post.get("caption") or "").strip()
+        text = (post.get("text") or post.get("caption") or "").strip()
 
-    if not text:
-        print("⏭️ [CHANNEL] Нет текста и подписи — игнорируем")
-        return {"ok": True}
+        if not text:
+            print("⏭️ [CHANNEL] Нет текста и подписи — игнорируем")
+            return {"ok": True}
 
     # Не реагируем на слишком короткие посты
-    if len(text) < 15:
-        print(f"⏭️ [CHANNEL] Пост слишком короткий ({len(text)} симв.) — игнорируем")
-        return {"ok": True}
+        if len(text) < 15:
+            print(f"⏭️ [CHANNEL] Пост слишком короткий ({len(text)} симв.) — игнорируем")
+            return {"ok": True}
 
     # Убираем служебные триггеры, если они есть
-    for t in ["#феон", "#feon", "@feon_ai_bot"]:
-        text = re.sub(re.escape(t), "", text, flags=re.IGNORECASE).strip()
+        for t in ["#феон", "#feon", "@feon_ai_bot"]:
+            text = re.sub(re.escape(t), "", text, flags=re.IGNORECASE).strip()
 
-    print(f"📣 [CHANNEL] Пост в «{chat_title}»: {text[:80]}...")
-    asyncio.create_task(process_and_reply(chat_id, user_id, text, is_channel=True))
-    return {"ok": True}
+        print(f"📣 [CHANNEL] Пост в «{chat_title}»: {text[:80]}...")
+        asyncio.create_task(process_and_reply(chat_id, user_id, text, is_channel=True))
+        return {"ok": True}
 
     # ============ ОБЫЧНЫЕ СООБЩЕНИЯ ============
     
