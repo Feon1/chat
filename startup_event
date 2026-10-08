@@ -982,7 +982,7 @@ async def telegram_webhook(update: dict):
         asyncio.create_task(process_and_reply(chat_id, user_id, text))
         return {"ok": True}
 
-    return {"ok": True}}
+    return {"ok": True}
 # ==========================================
 # 🌐 ЭНДПОИНТЫ ДЛЯ ФРОНТЕНДА И АДМИНКИ
 # ==========================================
