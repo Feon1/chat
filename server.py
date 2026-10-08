@@ -736,7 +736,8 @@ def _extract_answer_from_yandex(raw: str) -> str:
 
 
 async def process_and_reply(chat_id: int, user_id: str, text: str,
-                            is_channel: bool = False, reply_to_message_id: int = None):
+                            is_channel: bool = False, reply_to_message_id: int = None,
+                            post_link: str = None):
     try:
         print(f"🧵 [BG] Начинаем обработку для chat_id={chat_id}, "
               f"reply_to={reply_to_message_id}")
@@ -827,16 +828,22 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
               f"Начало: {payload_text[:120]!r}")
 
         # 5. Отправляем в Yandex
+      
         response_text = await call_yandex_function(payload_text, user_id)
         print(f"🧵 [BG] Ответ Yandex: {response_text[:120]}...")
 
-        # 6. Отправляем ответ пользователю
-     
-                # 6. Отправляем ответ пользователю
+        # 6. Формируем итоговое сообщение: префикс + ответ + ссылка
+        if is_channel and post_link:
+            final_text = f"**Феон говорит:**\n\n{response_text}\n\n📎 [Пост]({post_link})"
+        else:
+            final_text = response_text
+
+        # 7. Отправляем ответ пользователю
         await send_telegram_message(
             chat_id,
-            response_text,
+            final_text,
             reply_to_message_id=reply_to_message_id if is_channel else None,
+            parse_mode="Markdown" if is_channel and post_link else None,
         )
         print(f"🧵 [BG] Ответ отправлен в чат {chat_id}")
 
@@ -854,7 +861,8 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
 # ==========================================
 
 
-async def send_telegram_message(chat_id, text, reply_to_message_id=None):
+
+async def send_telegram_message(chat_id, text, reply_to_message_id=None, parse_mode=None):    
     """Отправляет сообщение, автоматически разбивая длинные тексты.
        Если reply_to_message_id задан — отправляет как ответ на сообщение."""
     MAX_LEN = 4000
@@ -887,6 +895,9 @@ async def send_telegram_message(chat_id, text, reply_to_message_id=None):
             if reply_to_message_id:
                 payload["reply_to_message_id"] = reply_to_message_id
                 payload["allow_sending_without_reply"] = True  # если пост удалён
+            # Markdown для красивого префикса и ссылки
+            if parse_mode:
+                payload["parse_mode"] = parse_mode
 
             async with session.post(url, json=payload) as resp:
                 result = await resp.json()
@@ -945,12 +956,27 @@ async def telegram_webhook(update: dict):
             text = re.sub(re.escape(t), "", text, flags=re.IGNORECASE).strip()
 
         
+       
         post_message_id = post["message_id"]
+
+        # Строим ссылку на пост
+        channel_username = post["chat"].get("username")
+        if channel_username:
+            # Публичный канал: t.me/username/123
+            post_link = f"https://t.me/{channel_username}/{post_message_id}"
+        else:
+            # Приватный канал: t.me/c/xxxx/123 (работает у админов)
+            internal_id = str(chat_id).replace("-100", "")
+            post_link = f"https://t.me/c/{internal_id}/{post_message_id}"
+
         print(f"📣 [CHANNEL] Пост в «{chat_title}» (msg_id={post_message_id}): {text[:80]}...")
+        print(f"🔗 [CHANNEL] Ссылка на пост: {post_link}")
+
         asyncio.create_task(process_and_reply(
             chat_id, user_id, text,
             is_channel=True,
             reply_to_message_id=post_message_id,
+            post_link=post_link,
         ))
         return {"ok": True}
 
