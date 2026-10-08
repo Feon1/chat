@@ -715,25 +715,19 @@ def _extract_answer_from_yandex(raw: str) -> str:
 # ==========================================
 # 🧵 ФОНОВАЯ ОБРАБОТКА СООБЩЕНИЙ TELEGRAM
 # ==========================================
-async def process_and_reply(chat_id: int, user_id: str, text: str):
-    """
-    Фоновая задача:
-    1. Извлекает содержимое ссылок (VK, Telegram, обычные сайты) НА RENDER.
-    2. Помечает payload маркером [RENDER_LINK], чтобы Yandex-функция
-       не уходила в режим накопления длинных текстов.
-    3. Удаляет протоколы (https://) из контента, чтобы Yandex не пытался
-       парсить ссылку сам (мы это уже сделали).
-    4. Передаёт текст + содержимое страницы в Yandex.
-    5. Отправляет ответ в Telegram.
-    """
+
+async def process_and_reply(chat_id: int, user_id: str, text: str, is_channel: bool = False):
     try:
         print(f"🧵 [BG] Начинаем обработку для chat_id={chat_id}")
 
-        # 1. Сообщение «думаю»
-        await send_telegram_message(
-            chat_id,
-            "⏳ Думаю над ответом, это может занять до минуты. Пожалуйста, подождите...",
-        )
+        # В каналах НЕ отправляем "⏳ Думаю..." — иначе оно попадёт в webhook
+        if not is_channel:
+            await send_telegram_message(
+                chat_id,
+                "⏳ Думаю над ответом, это может занять до минуты. Пожалуйста, подождите...",
+            )
+
+        # ... остальной код
 
         # 2. Извлекаем ссылки и парсим их на Render
         urls = extract_urls(text)
@@ -871,11 +865,18 @@ async def send_telegram_message(chat_id, text):
 
 
 
+
 @app.post("/webhook/telegram")
 async def telegram_webhook(update: dict):
-    # ---- Посты из каналов ----
+    # ---- Каналы ----
     if "channel_post" in update:
         post = update["channel_post"]
+
+        # ИГНОРИРУЕМ посты от ботов (включая себя)
+        if post.get("from", {}).get("is_bot"):
+            print("⏭️ [CHANNEL] Пост от бота — игнорируем")
+            return {"ok": True}
+
         chat_id = post["chat"]["id"]
         chat_title = post["chat"].get("title", "канал")
         user_id = f"tg_channel_{chat_id}"
@@ -885,7 +886,6 @@ async def telegram_webhook(update: dict):
 
         text = post["text"].strip()
 
-        # Триггер: реагируем только если в посте есть #феон или #feon
         TRIGGERS = ["#феон", "#feon", "@feon"]
         text_lower = text.lower()
         if not any(t in text_lower for t in TRIGGERS):
@@ -896,19 +896,36 @@ async def telegram_webhook(update: dict):
         for t in TRIGGERS:
             text = re.sub(re.escape(t), "", text, flags=re.IGNORECASE).strip()
 
-        print(f"📣 [CHANNEL] Пост в «{chat_title}» (chat_id={chat_id}): {text[:80]}...")
+        # Если после удаления триггера пусто — используем оригинальный пост
+        if len(text) < 10:
+            text = "Прокомментируй этот пост кратко."
+            print(f"📣 [CHANNEL] Триггер без текста — отправляем заглушку")
 
-        asyncio.create_task(process_and_reply(chat_id, user_id, text))
+        print(f"📣 [CHANNEL] Пост в «{chat_title}»: {text[:80]}...")
+        asyncio.create_task(process_and_reply(chat_id, user_id, text, is_channel=True))
         return {"ok": True}
 
     # ---- Обычные сообщения ----
     if "message" in update:
         message = update["message"]
+
+        # ИГНОРИРУЕМ сообщения от ботов (включая себя)
+        if message.get("from", {}).get("is_bot"):
+            print("⏭️ [MESSAGE] Сообщение от бота — игнорируем")
+            return {"ok": True}
+
         chat_id = message["chat"]["id"]
-        user_id = f"tg_{str(message['chat']['id'])}"
+        user_id = f"tg_{str(chat_id)}"
+
         if "text" not in message:
             return {"ok": True}
+
         text = message["text"].strip()
+
+        # Пропускаем собственные служебные сообщения (на случай, если webhook всё же получил)
+        if text.startswith("⏳") or text.startswith("❌") or text.startswith("⚠️"):
+            print(f"⏭️ [MESSAGE] Служебное сообщение — игнорируем")
+            return {"ok": True}
 
         if text.lower() == "/start":
             await send_telegram_message(chat_id, "Я Феон - верующий ИИ. Чем могу помочь?")
