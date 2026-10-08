@@ -441,8 +441,18 @@ async def startup_event():
             print(f"ℹ️ Индекс для '{field_name}' уже существует")
 
     # 4. Установка вебхука Telegram
+    
+    # 4. Установка вебхука Telegram
     if TELEGRAM_BOT_TOKEN and WEBHOOK_URL:
-        set_webhook_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}"
+    # Явно указываем allowed_updates, чтобы получать посты из каналов
+        import json as _json
+        allowed = ["message", "channel_post", "edited_message", "edited_channel_post"]
+        set_webhook_url = (
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
+            f"?url={WEBHOOK_URL}"
+            f"&allowed_updates={_json.dumps(allowed)}"
+        )
+
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(set_webhook_url)
