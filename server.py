@@ -907,11 +907,13 @@ async def telegram_webhook(update: dict):
         chat_title = post["chat"].get("title", "канал")
         user_id = f"tg_channel_{chat_id}"
 
+        text = (post.get("text") or post.get("caption") or "").strip()
+        
         if "text" not in post:
             print("⏭️ [CHANNEL] Нет текста (фото/видео) — игнорируем")
             return {"ok": True}
 
-        text = post["text"].strip()
+        #text = (post.get("text") or post.get("caption") or "").strip()
 
     # Не реагируем на слишком короткие посты (эмодзи, "ок" и т.п.)
         if len(text) < 15:
@@ -964,7 +966,9 @@ async def telegram_webhook(update: dict):
         else:
             user_id = f"tg_{str(chat_id)}"
 
-        if "text" not in message:
+        
+        text = (message.get("text") or message.get("caption") or "").strip()
+        if not text:
             return {"ok": True}
 
         text = message["text"].strip()
