@@ -838,8 +838,38 @@ async def send_telegram_message(chat_id, text):
             return result
 
 
+
 @app.post("/webhook/telegram")
 async def telegram_webhook(update: dict):
+    # ---- Посты из каналов ----
+    if "channel_post" in update:
+        post = update["channel_post"]
+        chat_id = post["chat"]["id"]
+        chat_title = post["chat"].get("title", "канал")
+        user_id = f"tg_channel_{chat_id}"
+
+        if "text" not in post:
+            return {"ok": True}
+
+        text = post["text"].strip()
+
+        # Триггер: реагируем только если в посте есть #феон или #feon
+        TRIGGERS = ["#феон", "#feon", "@feon"]
+        text_lower = text.lower()
+        if not any(t in text_lower for t in TRIGGERS):
+            print(f"⏭️ [CHANNEL] Пост без триггера — игнорируем")
+            return {"ok": True}
+
+        # Убираем триггер из текста
+        for t in TRIGGERS:
+            text = re.sub(re.escape(t), "", text, flags=re.IGNORECASE).strip()
+
+        print(f"📣 [CHANNEL] Пост в «{chat_title}» (chat_id={chat_id}): {text[:80]}...")
+
+        asyncio.create_task(process_and_reply(chat_id, user_id, text))
+        return {"ok": True}
+
+    # ---- Обычные сообщения ----
     if "message" in update:
         message = update["message"]
         chat_id = message["chat"]["id"]
@@ -856,7 +886,6 @@ async def telegram_webhook(update: dict):
         return {"ok": True}
 
     return {"ok": True}
-
 
 # ==========================================
 # 🌐 ЭНДПОИНТЫ ДЛЯ ФРОНТЕНДА И АДМИНКИ
