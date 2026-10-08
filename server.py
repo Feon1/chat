@@ -833,17 +833,22 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
         print(f"🧵 [BG] Ответ Yandex: {response_text[:120]}...")
 
         # 6. Формируем итоговое сообщение: префикс + ответ + ссылка
+      
         if is_channel and post_link:
-            final_text = f"**Феон говорит:**\n\n{response_text}\n\n📎 [Пост]({post_link})"
+            final_text = (
+                f"Феон говорит:\n\n"
+                f"{response_text}\n\n"
+                f"━━━━━━━━━━━━━━━━\n"
+                f"🔗 Пост: {post_link}"
+            )
         else:
             final_text = response_text
 
-        # 7. Отправляем ответ пользователю
+        # 7. Отправляем ответ пользователю (без parse_mode — Telegram сам сделает URL кликабельным)
         await send_telegram_message(
             chat_id,
             final_text,
             reply_to_message_id=reply_to_message_id if is_channel else None,
-            parse_mode="Markdown" if is_channel and post_link else None,
         )
         print(f"🧵 [BG] Ответ отправлен в чат {chat_id}")
 
