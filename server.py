@@ -868,6 +868,13 @@ async def send_telegram_message(chat_id, text):
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(update: dict):
+
+
+     # === ВРЕМЕННАЯ ДИАГНОСТИКА ===
+    import json as _json
+    update_types = [k for k in update.keys() if k != "update_id"]
+    print(f"📩 [RAW] update_id={update.get('update_id')} types={update_types}")
+    print(f"📩 [RAW] full={_json.dumps(update, ensure_ascii=False)[:500]}")
     # ---- Каналы ----
     if "channel_post" in update:
         post = update["channel_post"]
