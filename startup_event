@@ -56,6 +56,7 @@ YANDEX_API_KEY = os.getenv("YANDEX_API_KEY")
 if not YANDEX_API_KEY:
     print("⚠️ ВНИМАНИЕ: YANDEX_API_KEY не задан. Вызовы Yandex Cloud будут падать.")
 
+BOT_ID = None
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
@@ -440,18 +441,36 @@ async def startup_event():
         except Exception:
             print(f"ℹ️ Индекс для '{field_name}' уже существует")
 
-    # 4. Установка вебхука Telegram
+   
     
     # 4. Установка вебхука Telegram
+    
+    # 4. Получаем bot_id (чтобы не реагировать на свои сообщения) + ставим webhook
+    global BOT_ID
+    if TELEGRAM_BOT_TOKEN:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getMe"
+                )
+                data = r.json()
+                BOT_ID = data.get("result", {}).get("id")
+                bot_username = data.get("result", {}).get("username")
+                print(f"✅ Bot ID: {BOT_ID}, username: @{bot_username}")
+        except Exception as e:
+            print(f"⚠️ Не удалось получить bot_id: {e}")
+            BOT_ID = None
+
     if TELEGRAM_BOT_TOKEN and WEBHOOK_URL:
-    # Явно указываем allowed_updates, чтобы получать посты из каналов
+        # Явно указываем allowed_updates, чтобы получать посты из каналов
         import json as _json
         allowed = ["message", "channel_post", "edited_message", "edited_channel_post"]
+
         set_webhook_url = (
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
             f"?url={WEBHOOK_URL}"
             f"&allowed_updates={_json.dumps(allowed)}"
-            f"&drop_pending_updates=true"    # ← добавить
+            f"&drop_pending_updates=true"
         )
 
         async with httpx.AsyncClient() as client:
@@ -462,7 +481,6 @@ async def startup_event():
                 print(f"❌ Ошибка установки Telegram Webhook: {e}")
     else:
         print("⚠️ Переменные TELEGRAM_BOT_TOKEN или WEBHOOK_URL не найдены.")
-
 
 # ==========================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -875,12 +893,12 @@ async def telegram_webhook(update: dict):
     print(f"📩 [RAW] types={update_types}")
 
     # ============ ПОСТЫ В КАНАЛЕ ============
+    
     if "channel_post" in update:
         post = update["channel_post"]
         from_info = post.get("from", {}) or {}
 
-        # Игнорируем только настоящих ботов. Channel_Bot — это автопостеры,
-        # но посты от имени канала идут через sender_chat, поэтому не трогаем.
+    # Игнорируем посты от настоящих ботов
         if from_info.get("is_bot") and from_info.get("username") not in ("Channel_Bot",):
             print("⏭️ [CHANNEL] Пост от бота — игнорируем")
             return {"ok": True}
@@ -890,35 +908,43 @@ async def telegram_webhook(update: dict):
         user_id = f"tg_channel_{chat_id}"
 
         if "text" not in post:
-            print("⏭️ [CHANNEL] Нет текста в посте — игнорируем")
+            print("⏭️ [CHANNEL] Нет текста (фото/видео) — игнорируем")
             return {"ok": True}
 
         text = post["text"].strip()
 
-        TRIGGERS = ["#феон", "#feon", "@feon"]
-        text_lower = text.lower()
-        if not any(t in text_lower for t in TRIGGERS):
-            print(f"⏭️ [CHANNEL] Пост без триггера — игнорируем")
+    # Не реагируем на слишком короткие посты (эмодзи, "ок" и т.п.)
+        if len(text) < 15:
+            print(f"⏭️ [CHANNEL] Пост слишком короткий ({len(text)} симв.) — игнорируем")
             return {"ok": True}
 
-        # Убираем триггер из текста
-        for t in TRIGGERS:
+    # Убираем служебные триггеры, если они есть (не обязательны теперь)
+        for t in ["#феон", "#feon", "@feon_ai_bot"]:
             text = re.sub(re.escape(t), "", text, flags=re.IGNORECASE).strip()
-
-        if len(text) < 10:
-            text = "Прокомментируй этот пост кратко."
 
         print(f"📣 [CHANNEL] Пост в «{chat_title}»: {text[:80]}...")
         asyncio.create_task(process_and_reply(chat_id, user_id, text, is_channel=True))
         return {"ok": True}
 
     # ============ ОБЫЧНЫЕ СООБЩЕНИЯ ============
+    
+    # ============ ОБЫЧНЫЕ СООБЩЕНИЯ ============
     if "message" in update:
         message = update["message"]
         from_info = message.get("from", {}) or {}
+        sender_chat = message.get("sender_chat", {}) or {}
 
-        # Игнорируем настоящих ботов. GroupAnonymousBot — это анонимный
-        # админ группы (это НЕ бот), его не фильтруем.
+    # 1. Своё же сообщение бота — игнорируем (по bot_id)
+        if BOT_ID and from_info.get("id") == BOT_ID:
+            print(f"⏭️ [MESSAGE] Своё сообщение (bot_id={BOT_ID}) — игнорируем")
+            return {"ok": True}
+
+    # 2. Сообщение от лица канала (автопост в обсуждениях) — игнорируем
+        if sender_chat and sender_chat.get("type") == "channel":
+            print(f"⏭️ [MESSAGE] Сообщение от канала ({sender_chat.get('id')}) — игнорируем")
+            return {"ok": True}
+
+    # 3. Настоящие боты (кроме GroupAnonymousBot и Channel_Bot)
         is_real_bot = (
             from_info.get("is_bot")
             and from_info.get("username") not in ("GroupAnonymousBot", "Channel_Bot")
@@ -927,13 +953,12 @@ async def telegram_webhook(update: dict):
             print(f"⏭️ [MESSAGE] Сообщение от бота ({from_info.get('username')}) — игнорируем")
             return {"ok": True}
 
-        # chat_id для отправки ответа — это чат сообщения
+    # chat_id для отправки ответа — это чат сообщения
         chat_id = message["chat"]["id"]
         chat_type = message["chat"].get("type", "private")
 
-        # user_id для истории — если это анонимный админ в группе,
-        # используем sender_chat.id (id группы) как идентификатор
-        sender_chat = message.get("sender_chat", {}) or {}
+    # user_id для истории — если это анонимный админ в группе,
+    # используем sender_chat.id (id группы) как идентификатор
         if sender_chat and sender_chat.get("id"):
             user_id = f"tg_anon_{sender_chat['id']}"
         else:
@@ -944,7 +969,7 @@ async def telegram_webhook(update: dict):
 
         text = message["text"].strip()
 
-        # Пропускаем собственные служебные сообщения
+    # Пропускаем собственные служебные сообщения
         if text.startswith("⏳") or text.startswith("❌") or text.startswith("⚠️"):
             print(f"⏭️ [MESSAGE] Служебное сообщение — игнорируем")
             return {"ok": True}
@@ -957,7 +982,7 @@ async def telegram_webhook(update: dict):
         asyncio.create_task(process_and_reply(chat_id, user_id, text))
         return {"ok": True}
 
-    return {"ok": True}
+    return {"ok": True}}
 # ==========================================
 # 🌐 ЭНДПОИНТЫ ДЛЯ ФРОНТЕНДА И АДМИНКИ
 # ==========================================
