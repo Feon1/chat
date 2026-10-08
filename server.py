@@ -734,9 +734,12 @@ def _extract_answer_from_yandex(raw: str) -> str:
 # 🧵 ФОНОВАЯ ОБРАБОТКА СООБЩЕНИЙ TELEGRAM
 # ==========================================
 
-async def process_and_reply(chat_id: int, user_id: str, text: str, is_channel: bool = False):
+
+async def process_and_reply(chat_id: int, user_id: str, text: str,
+                            is_channel: bool = False, reply_to_message_id: int = None):
     try:
-        print(f"🧵 [BG] Начинаем обработку для chat_id={chat_id}")
+        print(f"🧵 [BG] Начинаем обработку для chat_id={chat_id}, "
+              f"reply_to={reply_to_message_id}")
 
         # В каналах НЕ отправляем "⏳ Думаю..." — иначе оно попадёт в webhook
         if not is_channel:
@@ -828,7 +831,13 @@ async def process_and_reply(chat_id: int, user_id: str, text: str, is_channel: b
         print(f"🧵 [BG] Ответ Yandex: {response_text[:120]}...")
 
         # 6. Отправляем ответ пользователю
-        await send_telegram_message(chat_id, response_text)
+     
+                # 6. Отправляем ответ пользователю
+        await send_telegram_message(
+            chat_id,
+            response_text,
+            reply_to_message_id=reply_to_message_id if is_channel else None,
+        )
         print(f"🧵 [BG] Ответ отправлен в чат {chat_id}")
 
     except Exception as e:
@@ -844,14 +853,15 @@ async def process_and_reply(chat_id: int, user_id: str, text: str, is_channel: b
 # 📱 TELEGRAM ИНТЕГРАЦИЯ
 # ==========================================
 
-async def send_telegram_message(chat_id, text):
-    """Отправляет сообщение, автоматически разбивая длинные тексты."""
-    MAX_LEN = 4000  # с запасом от лимита 4096
+
+async def send_telegram_message(chat_id, text, reply_to_message_id=None):
+    """Отправляет сообщение, автоматически разбивая длинные тексты.
+       Если reply_to_message_id задан — отправляет как ответ на сообщение."""
+    MAX_LEN = 4000
     parts = []
     if len(text) <= MAX_LEN:
         parts = [text]
     else:
-        # Режем по абзацам, чтобы не рвать предложения
         paragraphs = text.split("\n\n")
         current = ""
         for p in paragraphs:
@@ -860,7 +870,6 @@ async def send_telegram_message(chat_id, text):
             else:
                 if current:
                     parts.append(current)
-                # Если один абзац больше лимита — режем жёстко
                 while len(p) > MAX_LEN:
                     parts.append(p[:MAX_LEN])
                     p = p[MAX_LEN:]
@@ -873,13 +882,23 @@ async def send_telegram_message(chat_id, text):
         for i, part in enumerate(parts, 1):
             prefix = f"[{i}/{len(parts)}] " if len(parts) > 1 else ""
             payload = {"chat_id": chat_id, "text": prefix + part}
+
+            # Привязываем к исходному сообщению, если указано
+            if reply_to_message_id:
+                payload["reply_to_message_id"] = reply_to_message_id
+                payload["allow_sending_without_reply"] = True  # если пост удалён
+
             async with session.post(url, json=payload) as resp:
                 result = await resp.json()
                 if not result.get("ok"):
                     print(f"❌ Ошибка Telegram (часть {i}): {result}")
                 else:
                     print(f"✅ Отправлено: message_id={result.get('result', {}).get('message_id')}")
-    return True
+
+            # Если частей несколько — привязку ставим только на первую,
+            # чтобы вторая не выглядела как «ответ на ответ»
+            reply_to_message_id = None
+    return True 
 
 
 
@@ -925,8 +944,14 @@ async def telegram_webhook(update: dict):
         for t in ["#феон", "#feon", "@feon_ai_bot"]:
             text = re.sub(re.escape(t), "", text, flags=re.IGNORECASE).strip()
 
-        print(f"📣 [CHANNEL] Пост в «{chat_title}»: {text[:80]}...")
-        asyncio.create_task(process_and_reply(chat_id, user_id, text, is_channel=True))
+        
+        post_message_id = post["message_id"]
+        print(f"📣 [CHANNEL] Пост в «{chat_title}» (msg_id={post_message_id}): {text[:80]}...")
+        asyncio.create_task(process_and_reply(
+            chat_id, user_id, text,
+            is_channel=True,
+            reply_to_message_id=post_message_id,
+        ))
         return {"ok": True}
 
     # ============ ОБЫЧНЫЕ СООБЩЕНИЯ ============
