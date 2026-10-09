@@ -918,7 +918,35 @@ async def send_telegram_message(chat_id, text, reply_to_message_id=None, parse_m
 
 
 
+def extract_text_from_rich_message(rich: dict) -> str:
+    """
+    Извлекает весь текст из rich_message (Telegram Premium формат).
+    Рекурсивно обходит дерево и собирает все строки из полей 'text'.
+    """
+    parts = []
 
+    def walk(node):
+        if isinstance(node, dict):
+            # Собираем текст из 'text' или 'content'
+            for key in ("text", "content", "value"):
+                val = node.get(key)
+                if isinstance(val, str) and val.strip():
+                    parts.append(val.strip())
+            # Рекурсивно обходим вложенные структуры
+            for v in node.values():
+                if isinstance(v, (dict, list)):
+                    walk(v)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(rich)
+    # Убираем возможные дубли подряд
+    cleaned = []
+    for p in parts:
+        if not cleaned or cleaned[-1] != p:
+            cleaned.append(p)
+    return "\n\n".join(cleaned)
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(update: dict):
@@ -946,20 +974,20 @@ async def telegram_webhook(update: dict):
     # Текст может быть в "text" (обычный пост)
     # или в "caption" (подпись к фото/видео)
         
+        
         text = (post.get("text") or post.get("caption") or "").strip()
+
+# Если обычных text/caption нет — проверяем rich_message
+        if not text and "rich_message" in post:
+            rich = post["rich_message"]
+            print(f"💎 [CHANNEL] Обнаружен rich_message, извлекаем текст")
+            text = extract_text_from_rich_message(rich)
+            print(f"💎 [CHANNEL] Из rich_message извлечено {len(text)} символов")
+
         if not text:
-    # Диагностика: показываем, что реально пришло
             keys = [k for k in post.keys() if k != "chat"]
-            print(f"🔍 [CHANNEL-RAW] Пост без text/caption. Ключи: {keys}")
-            print(f"🔍 [CHANNEL-RAW] has_photo={'photo' in post}, "
-                  f"has_video={'video' in post}, "
-                  f"has_document={'document' in post}, "
-                  f"has_poll={'poll' in post}, "
-                  f"has_media_group={'media_group_id' in post}, "
-                  f"has_sticker={'sticker' in post}, "
-                  f"has_animation={'animation' in post}")
+            print(f"🔍 [CHANNEL-RAW] Пост без текста. Ключи: {keys}")
             print(f"🔍 [CHANNEL-RAW] dump: {json.dumps(post, ensure_ascii=False)[:600]}")
-            print("⏭️ [CHANNEL] Нет текста и подписи — игнорируем")
             return {"ok": True}
 
     # Не реагируем на слишком короткие посты
@@ -1058,7 +1086,11 @@ async def telegram_webhook(update: dict):
             user_id = f"tg_{str(chat_id)}"
 
         
+        
         text = (message.get("text") or message.get("caption") or "").strip()
+        if not text and "rich_message" in message:
+            text = extract_text_from_rich_message(message["rich_message"])
+            print(f"💎 [MESSAGE] Из rich_message извлечено {len(text)} символов")
         if not text:
             return {"ok": True}
 
