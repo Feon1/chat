@@ -945,9 +945,20 @@ async def telegram_webhook(update: dict):
 
     # Текст может быть в "text" (обычный пост)
     # или в "caption" (подпись к фото/видео)
+        
         text = (post.get("text") or post.get("caption") or "").strip()
-
         if not text:
+    # Диагностика: показываем, что реально пришло
+            keys = [k for k in post.keys() if k != "chat"]
+            print(f"🔍 [CHANNEL-RAW] Пост без text/caption. Ключи: {keys}")
+            print(f"🔍 [CHANNEL-RAW] has_photo={'photo' in post}, "
+                  f"has_video={'video' in post}, "
+                  f"has_document={'document' in post}, "
+                  f"has_poll={'poll' in post}, "
+                  f"has_media_group={'media_group_id' in post}, "
+                  f"has_sticker={'sticker' in post}, "
+                  f"has_animation={'animation' in post}")
+            print(f"🔍 [CHANNEL-RAW] dump: {json.dumps(post, ensure_ascii=False)[:600]}")
             print("⏭️ [CHANNEL] Нет текста и подписи — игнорируем")
             return {"ok": True}
 
