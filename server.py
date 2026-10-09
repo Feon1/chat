@@ -836,7 +836,7 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
       
         if is_channel and post_link:
             final_text = (
-                f"Феон говорит:\n\n"
+                f"@Feon_ai_bot говорит:\n\n"
                 f"{response_text}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"🔗 Пост: {post_link}"
@@ -962,20 +962,43 @@ async def telegram_webhook(update: dict):
 
         
        
+       
         post_message_id = post["message_id"]
 
-        # Строим ссылку на пост
-        channel_username = post["chat"].get("username")
-        if channel_username:
-            # Публичный канал: t.me/username/123
-            post_link = f"https://t.me/{channel_username}/{post_message_id}"
-        else:
-            # Приватный канал: t.me/c/xxxx/123 (работает у админов)
-            internal_id = str(chat_id).replace("-100", "")
-            post_link = f"https://t.me/c/{internal_id}/{post_message_id}"
+# Проверяем, пересланный ли это пост из другого канала
+        forward_chat = post.get("forward_from_chat") or {}
+        forward_msg_id = post.get("forward_from_message_id")
 
-        print(f"📣 [CHANNEL] Пост в «{chat_title}» (msg_id={post_message_id}): {text[:80]}...")
-        print(f"🔗 [CHANNEL] Ссылка на пост: {post_link}")
+        if forward_chat and forward_chat.get("type") == "channel" and forward_msg_id:
+    # Это пересылка из канала — ссылаемся на ОРИГИНАЛ
+            source_username = forward_chat.get("username")
+            source_id = forward_chat.get("id")
+            source_title = forward_chat.get("title", "канал-источник")
+
+           
+            if source_username:
+                post_link = f"https://t.me/{source_username}/{forward_msg_id}"
+            else:
+        # Приватный источник — ссылка по internal id (увидит только участник)
+                internal = str(source_id).replace("-100", "")
+                post_link = f"https://t.me/c/{internal}/{forward_msg_id}"
+
+            print(f"📣 [CHANNEL] Пересылка из «{source_title}» (msg_id={forward_msg_id})")
+            print(f"🔗 [CHANNEL] Ссылка на ИСХОДНЫЙ пост: {post_link}")
+        else:
+    # Обычный пост в своём канале
+            channel_username = post["chat"].get("username")
+            if channel_username:
+                post_link = f"https://t.me/{channel_username}/{post_message_id}"
+            else:
+                internal_id = str(chat_id).replace("-100", "")
+                post_link = f"https://t.me/c/{internal_id}/{post_message_id}"
+
+            print(f"📣 [CHANNEL] Своя публикация в «{chat_title}» (msg_id={post_message_id})")
+            print(f"🔗 [CHANNEL] Ссылка на свой пост: {post_link}")
+
+        print(f"📝 Текст: {text[:80]}...")
+        
 
         asyncio.create_task(process_and_reply(
             chat_id, user_id, text,
