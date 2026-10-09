@@ -837,7 +837,7 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
         # Формируем итоговое сообщение
         if is_channel and post_link:
             final_text = (
-                f"Феон говорит:\n\n"
+                f"@Feon_ai_bot говорит:\n\n"
                 f"{response_text}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"🔗 Пост: {post_link}"
@@ -1028,7 +1028,7 @@ async def telegram_webhook(update: dict):
             return {"ok": True}
 
         # Служебные — пропускаем
-        if text.startswith("⏳") or text.startswith("❌") or text.startswith("⚠️") or text.startswith("Феон говорит:"):
+        if text.startswith("⏳") or text.startswith("❌") or text.startswith("⚠️") or text.startswith("@Feon_ai_bot говорит:"):
             print("⏭️ [MESSAGE] Служебное сообщение — игнорируем")
             return {"ok": True}
 
