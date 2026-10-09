@@ -57,6 +57,7 @@ if not YANDEX_API_KEY:
     print("⚠️ ВНИМАНИЕ: YANDEX_API_KEY не задан. Вызовы Yandex Cloud будут падать.")
 
 BOT_ID = None
+BOT_USERNAME = "Feon_ai_bot"  # без @, используется в фильтре групп
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
@@ -128,16 +129,9 @@ def verify_admin(request: Request):
 async def fetch_telegram_post(url: str) -> str:
     """
     Извлекает текст КОНКРЕТНОГО поста из публичного Telegram-канала.
-    Поддерживает форматы:
-      https://t.me/channel/123
-      https://t.me/s/channel/123
-      https://telegram.me/channel/123
-      ... + любые query-параметры (?single, ?embed и т.п.)
-    Приватные каналы (t.me/c/...) не поддерживаются.
     """
     print(f"📱 [TG] Обрабатываем ссылку: {url}")
 
-    # Убираем query-параметры, хвостовые слеши
     url_clean = url.split("?")[0].split("#")[0].rstrip("/")
 
     match = re.search(
@@ -164,7 +158,6 @@ async def fetch_telegram_post(url: str) -> str:
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
     }
 
-    # Пробуем два варианта — превью канала и embed-виджет
     candidate_urls = [
         f"https://t.me/s/{channel}/{post_id}",
         f"https://t.me/{channel}/{post_id}?embed=1&mode=tme",
@@ -189,21 +182,17 @@ async def fetch_telegram_post(url: str) -> str:
                 target = f"{channel}/{post_id}"
                 collected = []
 
-                # 1) Ищем ИМЕННО нужный пост по data-post
                 for post in soup.select(".tgme_widget_message"):
                     data_post = post.get("data-post", "")
                     if data_post == target or data_post.endswith(f"/{post_id}"):
-                        # Основной текст
                         txt_el = post.select_one(".tgme_widget_message_text")
                         if txt_el:
                             collected.append(txt_el.get_text(separator="\n", strip=True))
-                        # Подпись к фото/видео/док
                         cap_el = post.select_one(".tgme_widget_message_caption")
                         if cap_el:
                             collected.append(cap_el.get_text(separator="\n", strip=True))
                         break
 
-                # 2) Fallback — если структура поменялась, берём первый текстовый блок
                 if not collected:
                     for el in soup.select(
                         ".tgme_widget_message_text, .tgme_widget_message_caption"
@@ -211,7 +200,7 @@ async def fetch_telegram_post(url: str) -> str:
                         txt = el.get_text(separator="\n", strip=True)
                         if txt:
                             collected.append(txt)
-                            break  # только первый, чтобы не склеивать соседние посты
+                            break
 
                 if not collected:
                     print("⚠️ [TG] Текст поста не найден в HTML")
@@ -249,7 +238,6 @@ async def fetch_vk_post(url: str) -> str:
         return ""
 
     async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
-        # 1) wall.getById
         try:
             resp = await client.get(
                 "https://api.vk.com/method/wall.getById",
@@ -264,7 +252,6 @@ async def fetch_vk_post(url: str) -> str:
         except Exception as e:
             print(f"⚠️ [VK] wall.getById ошибка: {e}")
 
-        # 2) wall.get
         try:
             resp = await client.get(
                 "https://api.vk.com/method/wall.get",
@@ -285,26 +272,22 @@ async def fetch_vk_post(url: str) -> str:
     return ""
 
 
-
 async def fetch_url_content(url: str) -> str:
     """Извлекает основной текст со страницы по URL."""
     print(f"🌐 [FETCH] Загружаем: {url}")
 
-    # ===== Telegram =====
     if "t.me/" in url or "telegram.me/" in url:
         tg_text = await fetch_telegram_post(url)
         if tg_text:
             return tg_text
         print("⚠️ [TG] Не удалось получить пост")
 
-    # ===== VK =====
     if "vk.ru/wall" in url or "vk.com/wall" in url:
         vk_text = await fetch_vk_post(url)
         if vk_text and len(vk_text) > 100:
             return vk_text
         print("⚠️ [VK] Не удалось получить пост через API, пробуем обычную загрузку")
 
-    # ===== Обычный сайт =====
     try:
         headers = {
             "User-Agent": (
@@ -325,14 +308,12 @@ async def fetch_url_content(url: str) -> str:
 
             soup = BeautifulSoup(response.text, "lxml")
 
-            # Удаляем служебные теги
             for element in soup([
                 "script", "style", "nav", "footer", "header", "aside", "noscript",
                 "button", "form", "iframe", "svg",
             ]):
                 element.decompose()
 
-            # Удаляем типичные UI-блоки по CSS-селекторам
             UI_SELECTORS = [
                 ".share", ".sharing", ".social", ".social-share", ".share-buttons",
                 "[class*='share']", "[class*='social']",
@@ -348,13 +329,11 @@ async def fetch_url_content(url: str) -> str:
             lines = [line.strip() for line in text.splitlines() if line.strip()]
             cleaned = "\n".join(lines)
 
-            # Убираем очень короткие строки (шум)
             cleaned = "\n".join(
                 line for line in cleaned.splitlines()
                 if len(line.strip()) > 3
             )
 
-            # Мягкая фильтрация UI-строк — удаляем строку, но НЕ всю страницу
             NOISE_LINES = {
                 "поделиться", "вернуться к странице", "показать список",
                 "посты сообщества", "читать далее", "комментировать",
@@ -387,8 +366,34 @@ async def fetch_url_content(url: str) -> str:
 
 
 def extract_urls(text: str) -> list[str]:
-    """Извлекает все ссылки из текста."""
     return re.findall(r'https?://[^\s]+', text)
+
+
+def extract_text_from_rich_message(rich: dict) -> str:
+    """
+    Извлекает весь текст из rich_message (Telegram Premium формат).
+    """
+    parts = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            for key in ("text", "content", "value"):
+                val = node.get(key)
+                if isinstance(val, str) and val.strip():
+                    parts.append(val.strip())
+            for v in node.values():
+                if isinstance(v, (dict, list)):
+                    walk(v)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(rich)
+    cleaned = []
+    for p in parts:
+        if not cleaned or cleaned[-1] != p:
+            cleaned.append(p)
+    return "\n\n".join(cleaned)
 
 
 # ==========================================
@@ -441,12 +446,8 @@ async def startup_event():
         except Exception:
             print(f"ℹ️ Индекс для '{field_name}' уже существует")
 
-   
-    
-    # 4. Установка вебхука Telegram
-    
-    # 4. Получаем bot_id (чтобы не реагировать на свои сообщения) + ставим webhook
-    global BOT_ID
+    # 4. Получаем bot_id + ставим webhook
+    global BOT_ID, BOT_USERNAME
     if TELEGRAM_BOT_TOKEN:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -455,14 +456,13 @@ async def startup_event():
                 )
                 data = r.json()
                 BOT_ID = data.get("result", {}).get("id")
-                bot_username = data.get("result", {}).get("username")
-                print(f"✅ Bot ID: {BOT_ID}, username: @{bot_username}")
+                BOT_USERNAME = data.get("result", {}).get("username", "Feon_ai_bot")
+                print(f"✅ Bot ID: {BOT_ID}, username: @{BOT_USERNAME}")
         except Exception as e:
             print(f"⚠️ Не удалось получить bot_id: {e}")
             BOT_ID = None
 
     if TELEGRAM_BOT_TOKEN and WEBHOOK_URL:
-        # Явно указываем allowed_updates, чтобы получать посты из каналов
         import json as _json
         allowed = ["message", "channel_post", "edited_message", "edited_channel_post"]
 
@@ -482,11 +482,35 @@ async def startup_event():
     else:
         print("⚠️ Переменные TELEGRAM_BOT_TOKEN или WEBHOOK_URL не найдены.")
 
+    # 5. Регистрация команд и кнопки меню
+    if TELEGRAM_BOT_TOKEN:
+        commands = [
+            {"command": "start", "description": "Начать диалог с Феоном"},
+            {"command": "help",  "description": "Справка и примеры"},
+            {"command": "menu",  "description": "Меню быстрых действий"},
+            {"command": "about", "description": "О Феоне"},
+        ]
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setMyCommands",
+                    json={"commands": commands}
+                )
+                print(f"✅ Команды зарегистрированы: {r.json().get('ok')}")
+
+                r2 = await client.post(
+                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setChatMenuButton",
+                    json={"menu_button": {"type": "commands"}}
+                )
+                print(f"✅ Menu button установлен: {r2.json().get('ok')}")
+        except Exception as e:
+            print(f"⚠️ Не удалось установить меню: {e}")
+
+
 # ==========================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
 async def get_embedding(text: str) -> list[float]:
-    """Получение эмбеддинга через Jina AI (dim=384)"""
     headers = {"Authorization": f"Bearer {JINA_API_KEY}", "Content-Type": "application/json"}
     data = {
         "model": "jina-embeddings-v3",
@@ -519,13 +543,11 @@ async def search_knowledge(query: str) -> str:
 
 
 async def save_to_history(user_id: str, role: str, content: str):
-    """Сохраняет сообщение в историю."""
     try:
         safe_user_id = str(user_id).strip()
         safe_role = str(role).strip()
         safe_content = str(content).strip() if content is not None else ""
 
-        # Чистим старые заглушки из Render (на случай, если что-то прилетит снаружи)
         safe_content = safe_content.replace(
             "[Содержимое страницы загрузить не удалось. Ответь по общим знаниям.]", ""
         ).strip()
@@ -657,10 +679,6 @@ async def process_message_core(user_id: str, text: str) -> str:
 # 📡 ВЫЗОВ YANDEX CLOUD FUNCTION
 # ==========================================
 async def call_yandex_function(message_text: str, user_id: str) -> str:
-    """
-    Отправляет сообщение в Yandex Cloud Function через API Gateway
-    и возвращает её ответ.
-    """
     payload = {
         "message": message_text,
         "user_id": user_id,
@@ -697,10 +715,6 @@ async def call_yandex_function(message_text: str, user_id: str) -> str:
 
 
 def _extract_answer_from_yandex(raw: str) -> str:
-    """
-    API Gateway + Mangum могут обернуть ответ 1 или 2 раза.
-    Разворачиваем рекурсивно, пока не найдём поле с ответом.
-    """
     def _dig(obj, depth=0):
         if depth > 5 or obj is None:
             return None
@@ -733,25 +747,21 @@ def _extract_answer_from_yandex(raw: str) -> str:
 # ==========================================
 # 🧵 ФОНОВАЯ ОБРАБОТКА СООБЩЕНИЙ TELEGRAM
 # ==========================================
-
-
 async def process_and_reply(chat_id: int, user_id: str, text: str,
                             is_channel: bool = False, reply_to_message_id: int = None,
-                            post_link: str = None):
+                            post_link: str = None, is_group: bool = False):
     try:
         print(f"🧵 [BG] Начинаем обработку для chat_id={chat_id}, "
               f"reply_to={reply_to_message_id}")
 
-        # В каналах НЕ отправляем "⏳ Думаю..." — иначе оно попадёт в webhook
-        if not is_channel:
+        # «⏳ Думаю…» — только в личку (не в группу и не в канал)
+        if not is_channel and not is_group:
             await send_telegram_message(
                 chat_id,
                 "⏳ Думаю над ответом, это может занять до минуты. Пожалуйста, подождите...",
             )
 
-        # ... остальной код
-
-        # 2. Извлекаем ссылки и парсим их на Render
+        # Извлекаем ссылки
         urls = extract_urls(text)
         page_text = ""
 
@@ -773,14 +783,11 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
             else:
                 print(f"⚠️ [BG] Не удалось извлечь содержимое ссылки {page_url}")
 
-        # 3. Убираем URL из текста пользователя
-        text_clean = re.sub(r'https?://\S+', '', text).strip()
-        # 3. Убираем URL из текста пользователя
+        # Убираем URL из текста
         text_clean = re.sub(r'https?://\S+', '', text).strip()
         if not text_clean and urls:
             text_clean = "Проанализируй содержимое страницы по ссылке и дай развёрнутый ответ."
 
-# 3.1. Если ссылка была, но контент не извлекли — предупреждаем пользователя
         if urls and not page_text:
             print(f"⚠️ [BG] Контент по ссылке не извлечён, уведомляем пользователя")
             await send_telegram_message(
@@ -790,10 +797,8 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
                 "Отвечу по общим знаниям."
             )
 
-# 4. Формируем payload с маркером [RENDER_LINK]
-        
+        # Формируем payload
         if not urls:
-    # Если текст длинный — ставим маркер, чтобы Yandex не уходил в буфер
             if len(text) > 1900:
                 payload_text = f"{RENDER_LINK_MARKER}\n{text}"
                 print(f"📤 [BG] Длинный текст без ссылки — с маркером ({len(payload_text)} симв.)")
@@ -802,11 +807,10 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
                 print(f"📤 [BG] Без ссылки — простой текст ({len(payload_text)} симв.)")
 
         elif page_text:
-    # Ссылка была и успешно распарсилась
             page_text_safe = (
                 page_text
-                    .replace("https://", "")
-                    .replace("http://", "")
+                .replace("https://", "")
+                .replace("http://", "")
             )
             payload_text = (
                 f"{RENDER_LINK_MARKER}\n"
@@ -816,7 +820,6 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
             )
 
         else:
-    # Ссылка была, но не распарсилась
             payload_text = (
                 f"{RENDER_LINK_MARKER}\n"
                 f"{text_clean}\n\n"
@@ -827,16 +830,14 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
         print(f"📤 [BG] Payload для Yandex: {len(payload_text)} симв. "
               f"Начало: {payload_text[:120]!r}")
 
-        # 5. Отправляем в Yandex
-      
+        # Вызов Yandex
         response_text = await call_yandex_function(payload_text, user_id)
         print(f"🧵 [BG] Ответ Yandex: {response_text[:120]}...")
 
-        # 6. Формируем итоговое сообщение: префикс + ответ + ссылка
-      
+        # Формируем итоговое сообщение
         if is_channel and post_link:
             final_text = (
-                f"@Feon_ai_bot говорит:\n\n"
+                f"Феон говорит:\n\n"
                 f"{response_text}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
                 f"🔗 Пост: {post_link}"
@@ -844,7 +845,7 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
         else:
             final_text = response_text
 
-        # 7. Отправляем ответ пользователю (без parse_mode — Telegram сам сделает URL кликабельным)
+        # Отправляем
         await send_telegram_message(
             chat_id,
             final_text,
@@ -864,12 +865,8 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
 # ==========================================
 # 📱 TELEGRAM ИНТЕГРАЦИЯ
 # ==========================================
-
-
-
-async def send_telegram_message(chat_id, text, reply_to_message_id=None, parse_mode=None):    
-    """Отправляет сообщение, автоматически разбивая длинные тексты.
-       Если reply_to_message_id задан — отправляет как ответ на сообщение."""
+async def send_telegram_message(chat_id, text, reply_to_message_id=None, parse_mode=None):
+    """Отправляет сообщение, автоматически разбивая длинные тексты."""
     MAX_LEN = 4000
     parts = []
     if len(text) <= MAX_LEN:
@@ -896,11 +893,10 @@ async def send_telegram_message(chat_id, text, reply_to_message_id=None, parse_m
             prefix = f"[{i}/{len(parts)}] " if len(parts) > 1 else ""
             payload = {"chat_id": chat_id, "text": prefix + part}
 
-            # Привязываем к исходному сообщению, если указано
             if reply_to_message_id:
                 payload["reply_to_message_id"] = reply_to_message_id
-                payload["allow_sending_without_reply"] = True  # если пост удалён
-            # Markdown для красивого префикса и ссылки
+                payload["allow_sending_without_reply"] = True
+
             if parse_mode:
                 payload["parse_mode"] = parse_mode
 
@@ -911,58 +907,24 @@ async def send_telegram_message(chat_id, text, reply_to_message_id=None, parse_m
                 else:
                     print(f"✅ Отправлено: message_id={result.get('result', {}).get('message_id')}")
 
-            # Если частей несколько — привязку ставим только на первую,
-            # чтобы вторая не выглядела как «ответ на ответ»
-            reply_to_message_id = None
-    return True 
+            reply_to_message_id = None  # только на первую часть
+    return True
 
 
-
-def extract_text_from_rich_message(rich: dict) -> str:
-    """
-    Извлекает весь текст из rich_message (Telegram Premium формат).
-    Рекурсивно обходит дерево и собирает все строки из полей 'text'.
-    """
-    parts = []
-
-    def walk(node):
-        if isinstance(node, dict):
-            # Собираем текст из 'text' или 'content'
-            for key in ("text", "content", "value"):
-                val = node.get(key)
-                if isinstance(val, str) and val.strip():
-                    parts.append(val.strip())
-            # Рекурсивно обходим вложенные структуры
-            for v in node.values():
-                if isinstance(v, (dict, list)):
-                    walk(v)
-        elif isinstance(node, list):
-            for item in node:
-                walk(item)
-
-    walk(rich)
-    # Убираем возможные дубли подряд
-    cleaned = []
-    for p in parts:
-        if not cleaned or cleaned[-1] != p:
-            cleaned.append(p)
-    return "\n\n".join(cleaned)
-
+# ==========================================
+# 🎯 WEBHOOK
+# ==========================================
 @app.post("/webhook/telegram")
 async def telegram_webhook(update: dict):
-    # === ВРЕМЕННАЯ ДИАГНОСТИКА ===
     import json as _json
     update_types = [k for k in update.keys() if k != "update_id"]
     print(f"📩 [RAW] types={update_types}")
 
     # ============ ПОСТЫ В КАНАЛЕ ============
-    
-    
     if "channel_post" in update:
         post = update["channel_post"]
         from_info = post.get("from", {}) or {}
 
-    # Игнорируем посты от настоящих ботов
         if from_info.get("is_bot") and from_info.get("username") not in ("Channel_Bot",):
             print("⏭️ [CHANNEL] Пост от бота — игнорируем")
             return {"ok": True}
@@ -971,61 +933,44 @@ async def telegram_webhook(update: dict):
         chat_title = post["chat"].get("title", "канал")
         user_id = f"tg_channel_{chat_id}"
 
-    # Текст может быть в "text" (обычный пост)
-    # или в "caption" (подпись к фото/видео)
-        
-        
         text = (post.get("text") or post.get("caption") or "").strip()
 
-# Если обычных text/caption нет — проверяем rich_message
         if not text and "rich_message" in post:
-            rich = post["rich_message"]
-            print(f"💎 [CHANNEL] Обнаружен rich_message, извлекаем текст")
-            text = extract_text_from_rich_message(rich)
+            print("💎 [CHANNEL] Обнаружен rich_message, извлекаем текст")
+            text = extract_text_from_rich_message(post["rich_message"])
             print(f"💎 [CHANNEL] Из rich_message извлечено {len(text)} символов")
 
         if not text:
             keys = [k for k in post.keys() if k != "chat"]
             print(f"🔍 [CHANNEL-RAW] Пост без текста. Ключи: {keys}")
-            print(f"🔍 [CHANNEL-RAW] dump: {json.dumps(post, ensure_ascii=False)[:600]}")
             return {"ok": True}
 
-    # Не реагируем на слишком короткие посты
         if len(text) < 15:
             print(f"⏭️ [CHANNEL] Пост слишком короткий ({len(text)} симв.) — игнорируем")
             return {"ok": True}
 
-    # Убираем служебные триггеры, если они есть
-        for t in ["#феон", "#feon", "@feon_ai_bot"]:
+        for t in ["#феон", "#feon", f"@{BOT_USERNAME}"]:
             text = re.sub(re.escape(t), "", text, flags=re.IGNORECASE).strip()
 
-        
-       
-       
         post_message_id = post["message_id"]
 
-# Проверяем, пересланный ли это пост из другого канала
         forward_chat = post.get("forward_from_chat") or {}
         forward_msg_id = post.get("forward_from_message_id")
 
         if forward_chat and forward_chat.get("type") == "channel" and forward_msg_id:
-    # Это пересылка из канала — ссылаемся на ОРИГИНАЛ
             source_username = forward_chat.get("username")
             source_id = forward_chat.get("id")
             source_title = forward_chat.get("title", "канал-источник")
 
-           
             if source_username:
                 post_link = f"https://t.me/{source_username}/{forward_msg_id}"
             else:
-        # Приватный источник — ссылка по internal id (увидит только участник)
                 internal = str(source_id).replace("-100", "")
                 post_link = f"https://t.me/c/{internal}/{forward_msg_id}"
 
             print(f"📣 [CHANNEL] Пересылка из «{source_title}» (msg_id={forward_msg_id})")
             print(f"🔗 [CHANNEL] Ссылка на ИСХОДНЫЙ пост: {post_link}")
         else:
-    # Обычный пост в своём канале
             channel_username = post["chat"].get("username")
             if channel_username:
                 post_link = f"https://t.me/{channel_username}/{post_message_id}"
@@ -1037,7 +982,6 @@ async def telegram_webhook(update: dict):
             print(f"🔗 [CHANNEL] Ссылка на свой пост: {post_link}")
 
         print(f"📝 Текст: {text[:80]}...")
-        
 
         asyncio.create_task(process_and_reply(
             chat_id, user_id, text,
@@ -1048,24 +992,22 @@ async def telegram_webhook(update: dict):
         return {"ok": True}
 
     # ============ ОБЫЧНЫЕ СООБЩЕНИЯ ============
-    
-    # ============ ОБЫЧНЫЕ СООБЩЕНИЯ ============
     if "message" in update:
         message = update["message"]
         from_info = message.get("from", {}) or {}
         sender_chat = message.get("sender_chat", {}) or {}
 
-    # 1. Своё же сообщение бота — игнорируем (по bot_id)
+        # 1. Своё сообщение бота
         if BOT_ID and from_info.get("id") == BOT_ID:
             print(f"⏭️ [MESSAGE] Своё сообщение (bot_id={BOT_ID}) — игнорируем")
             return {"ok": True}
 
-    # 2. Сообщение от лица канала (автопост в обсуждениях) — игнорируем
+        # 2. Сообщение от лица канала
         if sender_chat and sender_chat.get("type") == "channel":
-            print(f"⏭️ [MESSAGE] Сообщение от канала ({sender_chat.get('id')}) — игнорируем")
+            print(f"⏭️ [MESSAGE] Сообщение от канала — игнорируем")
             return {"ok": True}
 
-    # 3. Настоящие боты (кроме GroupAnonymousBot и Channel_Bot)
+        # 3. Настоящие боты
         is_real_bot = (
             from_info.get("is_bot")
             and from_info.get("username") not in ("GroupAnonymousBot", "Channel_Bot")
@@ -1074,19 +1016,10 @@ async def telegram_webhook(update: dict):
             print(f"⏭️ [MESSAGE] Сообщение от бота ({from_info.get('username')}) — игнорируем")
             return {"ok": True}
 
-    # chat_id для отправки ответа — это чат сообщения
         chat_id = message["chat"]["id"]
         chat_type = message["chat"].get("type", "private")
 
-    # user_id для истории — если это анонимный админ в группе,
-    # используем sender_chat.id (id группы) как идентификатор
-        if sender_chat and sender_chat.get("id"):
-            user_id = f"tg_anon_{sender_chat['id']}"
-        else:
-            user_id = f"tg_{str(chat_id)}"
-
-        
-        
+        # Текст
         text = (message.get("text") or message.get("caption") or "").strip()
         if not text and "rich_message" in message:
             text = extract_text_from_rich_message(message["rich_message"])
@@ -1094,22 +1027,129 @@ async def telegram_webhook(update: dict):
         if not text:
             return {"ok": True}
 
-        text = message["text"].strip()
-
-    # Пропускаем собственные служебные сообщения
-        if text.startswith("⏳") or text.startswith("❌") or text.startswith("⚠️"):
-            print(f"⏭️ [MESSAGE] Служебное сообщение — игнорируем")
+        # Служебные — пропускаем
+        if text.startswith("⏳") or text.startswith("❌") or text.startswith("⚠️") or text.startswith("Феон говорит:"):
+            print("⏭️ [MESSAGE] Служебное сообщение — игнорируем")
             return {"ok": True}
 
-        if text.lower() == "/start":
-            await send_telegram_message(chat_id, "Я Феон - верующий ИИ. Чем могу помочь?")
+        # user_id для истории
+        if chat_type in ("group", "supergroup"):
+            if sender_chat and sender_chat.get("id"):
+                user_id = f"tg_anon_{sender_chat['id']}_{chat_id}"
+            elif from_info.get("id"):
+                user_id = f"tg_user_{from_info['id']}"
+            else:
+                user_id = f"tg_{chat_id}"
+        else:
+            user_id = f"tg_{from_info.get('id') or chat_id}"
+
+        # ФИЛЬТР ГРУПП
+        if chat_type in ("group", "supergroup"):
+            mention_triggers = [
+                f"@{BOT_USERNAME}",
+                f"#{BOT_USERNAME}",
+                "#феон", "#feon", "#Феон", "#Feon",
+            ]
+            text_lower = text.lower()
+            is_mentioned = any(t.lower() in text_lower for t in mention_triggers)
+
+            reply_to = message.get("reply_to_message", {})
+            is_reply_to_bot = reply_to.get("from", {}).get("id") == BOT_ID
+
+            is_command = text.startswith("/")
+
+            if not (is_mentioned or is_reply_to_bot or is_command):
+                print("⏭️ [GROUP] Нет упоминания и не реплай — игнорируем")
+                return {"ok": True}
+
+            for t in mention_triggers:
+                text = text.replace(t, "").strip()
+            text = text.strip()
+            if not text:
+                text = "Ответь коротко, что ты можешь помочь."
+
+            print(f"💬 [GROUP] Упоминание найдено: {text[:60]!r}")
+
+        # КОМАНДЫ
+        cmd = text.lower().split()[0] if text else ""
+
+        if cmd == "/start":
+            await send_telegram_message(
+                chat_id,
+                "🌟 Привет! Я Феон — верующий ИИ.\n\n"
+                "Помогу осмыслить текст, ссылку или философский вопрос. "
+                "Отвечаю по существу, с опорой на христианскую традицию.\n\n"
+                "Команды:\n"
+                "/help — справка и примеры\n"
+                "/menu — меню быстрых действий\n"
+                "/about — о Феоне\n\n"
+                "Просто напиши что-нибудь — и я отвечу."
+            )
             return {"ok": True}
 
+        if cmd == "/help":
+            await send_telegram_message(
+                chat_id,
+                "📖 Справка:\n\n"
+                "Что умею:\n"
+                "• Отвечать на вопросы — простые и сложные\n"
+                "• Разбирать ссылки (статьи, посты)\n"
+                "• Осмыслять длинные тексты — отправь текст, потом /конец\n"
+                "• Давать философский отклик\n\n"
+                "Примеры:\n"
+                "• Что такое молитва?\n"
+                "• Как совмещать веру и технологии?\n"
+                "• Пришли ссылку — разберу\n\n"
+                "Работа в группах:\n"
+                f"В группе я отвечаю, когда меня позовут:\n"
+                f"@{BOT_USERNAME} вопрос\n"
+                f"#феон вопрос\n"
+                "Или ответом на моё сообщение."
+            )
+            return {"ok": True}
+
+        if cmd == "/about":
+            await send_telegram_message(
+                chat_id,
+                "🧠 Феон — верующий ИИ\n\n"
+                "Ищу смысл на стыке веры, философии и технологий. "
+                "Опираюсь на христианскую традицию и базу знаний, "
+                "не подменяя её готовыми формулами.\n\n"
+                "Говорю тепло, но по существу.\n\n"
+                "Канал: @Feon_ai_theology"
+            )
+            return {"ok": True}
+
+        if cmd == "/menu":
+            await send_telegram_message(
+                chat_id,
+                "🎯 Быстрое меню:\n\n"
+                "1️⃣ Духовная жизнь\n"
+                "   → Что такое молитва?\n"
+                "   → Как бороться с унынием?\n\n"
+                "2️⃣ Вера и технологии\n"
+                "   → Может ли ИИ быть верующим?\n"
+                "   → Как относиться к прогрессу?\n\n"
+                "3️⃣ Философия смысла\n"
+                "   → Зачем человеку страдание?\n"
+                "   → Что такое свобода?\n\n"
+                "4️⃣ Разбор ссылки или текста\n"
+                "   → Пришли ссылку или текст\n\n"
+                "Напиши свой вопрос — или выбери пример выше."
+            )
+            return {"ok": True}
+
+        # ОБЫЧНАЯ ОБРАБОТКА
         print(f"💬 [MESSAGE] chat_id={chat_id}, user_id={user_id}, text={text[:60]!r}")
-        asyncio.create_task(process_and_reply(chat_id, user_id, text))
+        asyncio.create_task(process_and_reply(
+            chat_id, user_id, text,
+            is_group=(chat_type in ("group", "supergroup")),
+        ))
         return {"ok": True}
 
     return {"ok": True}
+
+
 # ==========================================
 # 🌐 ЭНДПОИНТЫ ДЛЯ ФРОНТЕНДА И АДМИНКИ
 # ==========================================
@@ -1350,12 +1390,6 @@ async def delete_file_knowledge(file_name: str, request: Request):
 
 @app.post("/parse_url")
 async def parse_url_endpoint(request: Request):
-    """
-    Внутренний эндпоинт для Yandex Cloud Function.
-    Принимает {"url": "..."} → возвращает {"text": "...", "url": "..."}.
-    Защищён общим секретом, чтобы снаружи не пользовались.
-    """
-    # Простая защита: общий токен между Render и Yandex
     parser_token = os.getenv("PARSER_TOKEN")
     if parser_token:
         incoming = request.headers.get("x-parser-token")
@@ -1380,6 +1414,7 @@ async def parse_url_endpoint(request: Request):
         "text": text,
         "ok": bool(text),
     })
+
 
 @app.post("/update_system_prompt")
 async def update_system_prompt(request: Request):
