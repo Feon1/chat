@@ -882,7 +882,11 @@ async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: i
     print(f"🖥️ [LOCAL-LLM] Отправка на {LOCAL_LLM_BASE_URL}, model={LOCAL_LLM_MODEL}")
     t_start = time.time() if 'time' in dir() else 0
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
+   
+        # Tailscale Funnel медленно отвечает на TLS handshake — нужен запас
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(180.0, connect=60.0, write=30.0, pool=30.0),
+    ) as client:
         try:
             r = await client.post(
                 f"{LOCAL_LLM_BASE_URL}/chat/completions",
