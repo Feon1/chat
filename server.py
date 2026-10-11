@@ -70,6 +70,13 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 JINA_API_KEY = os.getenv("JINA_API_KEY")
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
 
+# Коллекция Yandex (та же, что использует feon-chat-bot-function) — dim=1536
+KNOWLEDGE_MAX_COLLECTION = "xiaozhi_knowledge_max"
+
+# Polza Embedding для fallback
+POLZA_EMBEDDING_API_KEY = os.getenv("POLZA_EMBEDDING_API_KEY") or POLZA_API_KEY
+POLZA_EMBEDDING_URL = os.getenv("POLZA_EMBEDDING_URL", "https://polza.ai/api/v1/embeddings")
+
 COLLECTION_NAME = "xiaozhi_knowledge_tg"
 HISTORY_COLLECTION = "chat_history_tg"
 
@@ -742,7 +749,159 @@ def _extract_answer_from_yandex(raw: str) -> str:
     except json.JSONDecodeError:
         return None
     return _dig(data)
+    
+# ==========================================
+# 🚑 ЛОКАЛЬНЫЙ FALLBACK (если Yandex недоступен)
+# ==========================================
 
+async def get_polza_embedding(text: str) -> list[float]:
+    """Эмбеддинг через Polza (dim=1536) — для коллекции xiaozhi_knowledge_max."""
+    if not POLZA_EMBEDDING_API_KEY:
+        raise ValueError("POLZA_EMBEDDING_API_KEY не задан")
+
+    headers = {
+        "Authorization": f"Bearer {POLZA_EMBEDDING_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    data = {"model": "text-embedding-3-small", "input": [text]}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(POLZA_EMBEDDING_URL, headers=headers, json=data)
+        r.raise_for_status()
+        return r.json()["data"][0]["embedding"]
+
+
+async def search_knowledge_max(query: str) -> str:
+    """RAG-поиск в xiaozhi_knowledge_max — та же коллекция, что у Yandex."""
+    if not POLZA_EMBEDDING_API_KEY:
+        print("⚠️ [FALLBACK-RAG] Нет POLZA_EMBEDDING_API_KEY — пропускаем RAG")
+        return ""
+
+    try:
+        vec = await get_polza_embedding(query)
+    except Exception as e:
+        print(f"⚠️ [FALLBACK-RAG] Эмбеддинг упал: {type(e).__name__}: {e}")
+        return ""
+
+    try:
+        result = await asyncio.to_thread(
+            qdrant.query_points,
+            collection_name=KNOWLEDGE_MAX_COLLECTION,
+            query=vec,
+            limit=5,
+            with_payload=True,
+            score_threshold=0.40,
+        )
+        points = result.points if hasattr(result, "points") else []
+    except Exception as e:
+        print(f"⚠️ [FALLBACK-RAG] Qdrant упал: {e}")
+        return ""
+
+    if not points:
+        print("⏭️ [FALLBACK-RAG] Ничего не найдено")
+        return ""
+
+    print(f"✅ [FALLBACK-RAG] Найдено {len(points)} чанков "
+          f"(score: {points[0].score:.2f}..{points[-1].score:.2f})")
+
+    return "\n\n".join([
+        p.payload.get("text", "") for p in points if p.payload
+    ])
+
+
+async def local_fallback(payload_text: str, user_id: str, platform: str = "Telegram") -> str:
+    """
+    Резервный ответ, когда Yandex Cloud Function недоступна.
+    Делает то же, что Yandex: убирает маркер, ищет в Qdrant, зовёт Polza.
+    """
+    print("🚑 [FALLBACK] Yandex недоступен — генерирую ответ локально")
+
+    # 1. Срезаем маркер RENDER_LINK
+    text = payload_text
+    if text.startswith(RENDER_LINK_MARKER):
+        text = text[len(RENDER_LINK_MARKER):].lstrip()
+
+    # 2. Убираем заглушки
+    text = text.replace(
+        "[Содержимое страницы загрузить не удалось. Ответь по общим знаниям.]", ""
+    ).strip()
+    text = text.replace(
+        "Ознакомься с содержимым по ссылке и дай развёрнутый ответ.", ""
+    ).strip()
+
+    if not text:
+        return "Извините, я не смог получить вопрос."
+
+    # 3. RAG
+    context = await search_knowledge_max(text)
+    if context:
+        print(f"📄 [FALLBACK] RAG-контекст: {len(context)} символов")
+    else:
+        print("⏭️ [FALLBACK] RAG пуст")
+
+    # 4. История
+    history = get_history(user_id, limit=3)
+    chat_history_str = "\n".join([
+        f"{'Пользователь' if m.get('role')=='user' else 'Ассистент'}: {m.get('content', '')}"
+        for m in history if m.get("content")
+    ])
+
+    # 5. Промпт
+    prompt = f"[Источник: {platform}]\n\n"
+    if chat_history_str:
+        prompt += f"История:\n{chat_history_str}\n\n"
+    prompt += f"Вопрос пользователя: {text}\n\n"
+    if context:
+        prompt += f"Справочный материал из базы знаний:\n{context}\n\n"
+    prompt += (
+        "Дай прямой, связный ответ по существу. "
+        "Не используй нумерацию, списки и заголовки. "
+        "Опирайся на философские и богословские идеи из контекста и системного промпта. "
+        "Ответ — не длиннее 1500 символов."
+    )
+
+    # 6. Polza
+    answer = None
+    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+        try:
+            r = await client.post(
+                "https://api.polza.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {POLZA_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "deepseek/deepseek-v4-flash",
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "temperature": 0.75,
+                    "max_tokens": 1500,
+                    "frequency_penalty": 0.6,
+                    "presence_penalty": 0.5,
+                    "thinking": {"type": "disabled"},
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+            if data.get("choices"):
+                answer = data["choices"][0]["message"].get("content")
+            print(f"✅ [FALLBACK] Polza ответил: {len(answer) if answer else 0} символов")
+        except Exception as e:
+            print(f"❌ [FALLBACK] Polza упала: {type(e).__name__}: {e}")
+            traceback.print_exc()
+
+    if not answer or not answer.strip():
+        answer = "Извините, я временно не могу ответить. Попробуйте ещё раз через минуту."
+
+    # 7. Сохраняем в историю (чтобы контекст не терялся)
+    try:
+        await save_to_history(user_id, "bot", answer)
+    except Exception as e:
+        print(f"⚠️ [FALLBACK] Не удалось сохранить в историю: {e}")
+
+    return answer
 
 # ==========================================
 # 🧵 ФОНОВАЯ ОБРАБОТКА СООБЩЕНИЙ TELEGRAM
@@ -830,9 +989,28 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
         print(f"📤 [BG] Payload для Yandex: {len(payload_text)} симв. "
               f"Начало: {payload_text[:120]!r}")
 
-        # Вызов Yandex
+ 
+                # 5. Отправляем в Yandex
         response_text = await call_yandex_function(payload_text, user_id)
         print(f"🧵 [BG] Ответ Yandex: {response_text[:120]}...")
+
+        # 🚑 FALLBACK: если Yandex вернул ошибку/пусто — работаем локально
+        is_yandex_failed = (
+            not response_text
+            or response_text.startswith("❌")
+            or response_text.startswith("Извините, произошла ошибка")
+            or response_text.startswith("Извините, я не смог сформулировать")
+        )
+        if is_yandex_failed:
+            print("🚑 [BG] Yandex недоступен — переключаюсь на локальный fallback")
+            try:
+                response_text = await local_fallback(
+                    payload_text, user_id, platform="Telegram"
+                )
+            except Exception as e:
+                print(f"❌ [BG] Fallback тоже упал: {e}")
+                traceback.print_exc()
+                response_text = "Извините, сервис временно недоступен. Попробуйте позже."
 
         # Формируем итоговое сообщение
         if is_channel and post_link:
