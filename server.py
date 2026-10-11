@@ -1457,12 +1457,12 @@ async def telegram_webhook(update: dict):
 
         if cmd == "/model":
             cur = get_current_model()
-            name = "Polza (DeepSeek V4 Flash)" if cur == "polza" else f"Локальная ({LOCAL_LLM_MODEL})"
+            name = "DeepSeek V4 Flash" if cur == "polza" else f"Локальная ({LOCAL_LLM_MODEL})"
             await send_telegram_message(
                 chat_id,
                 f"🤖 Текущая модель: *{name}*\n\n"
                 f"Сменить:\n"
-                f"/model_polza — Polza (DeepSeek V4 Flash)\n"
+                f"/model_polza — (DeepSeek V4 Flash)\n"
                 f"/model_local — Локальная (Qwen3.5-4B)"
             )
             return {"ok": True}
@@ -1471,7 +1471,7 @@ async def telegram_webhook(update: dict):
             await save_current_model("polza")
             await send_telegram_message(
                 chat_id,
-                "✅ Модель переключена на *Polza (DeepSeek V4 Flash)*"
+                "✅ Модель переключена на *DeepSeek V4 Flash*"
             )
             return {"ok": True}
 
@@ -1480,7 +1480,7 @@ async def telegram_webhook(update: dict):
             await send_telegram_message(
                 chat_id,
                 f"✅ Модель переключена на *Локальную* ({LOCAL_LLM_MODEL})\n\n"
-                f"⚠️ Работает только если Render видит Tailscale."
+                f"⚠️ Работает только если funnel активен."
             )
             return {"ok": True}
 
