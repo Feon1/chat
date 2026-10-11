@@ -1463,7 +1463,7 @@ async def telegram_webhook(update: dict):
                 f"🤖 Текущая модель: *{name}*\n\n"
                 f"Сменить:\n"
                 f"/model_polza — (DeepSeek V4 Flash)\n"
-                f"/model_local — Локальная (Qwen3.5-4B)"
+                f"/model_local — Локальная LLM"
             )
             return {"ok": True}
 
