@@ -1429,7 +1429,7 @@ async def telegram_webhook(update: dict):
             )
             return {"ok": True}
 
-                if cmd == "/model":
+        if cmd == "/model":
             cur = get_current_model()
             name = "Polza (DeepSeek V4 Flash)" if cur == "polza" else f"Локальная ({LOCAL_LLM_MODEL})"
             await send_telegram_message(
