@@ -18,6 +18,7 @@ import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from bs4 import BeautifulSoup
+import time
 
 
 try:
@@ -78,6 +79,20 @@ HISTORY_COLLECTION = "chat_history_tg"
 
 JINA_API_URL = "https://api.jina.ai/v1/embeddings"
 
+# ===== Локальная модель (через Tailscale) =====
+# Все параметры берутся из переменных окружения Render.
+# В коде секретов быть не должно.
+LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL")
+LOCAL_LLM_API_KEY = os.getenv("LOCAL_LLM_API_KEY")
+LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL")
+
+if not LOCAL_LLM_BASE_URL or not LOCAL_LLM_API_KEY:
+    print("⚠️ Локальная модель не настроена: нет LOCAL_LLM_BASE_URL или LOCAL_LLM_API_KEY")
+    print("   Команда /model_local будет недоступна")
+
+# Коллекция для настроек (текущая модель и т.п.)
+SETTINGS_COLLECTION = "app_settings"
+
 BUCKET_NAME = os.getenv("BUCKET_NAME")
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
@@ -89,6 +104,55 @@ qdrant = QdrantClient(
     api_key=QDRANT_API_KEY,
     timeout=30,
 )
+# Текущая модель: "polza" или "local"
+_current_model = "polza"
+_SETTINGS_MODEL_ID = "11111111-1111-1111-1111-111111111111"  # фиксированный UUID
+
+
+def get_current_model() -> str:
+    return _current_model
+
+
+async def load_current_model():
+    """Читает текущую модель из Qdrant."""
+    global _current_model
+    try:
+        records = await asyncio.to_thread(
+            qdrant.retrieve,
+            collection_name=SETTINGS_COLLECTION,
+            ids=[_SETTINGS_MODEL_ID],
+            with_payload=True,
+        )
+        if records and records[0].payload:
+            val = records[0].payload.get("value", "polza")
+            if val in ("polza", "local"):
+                _current_model = val
+                print(f"✅ Модель из Qdrant: {_current_model}")
+                return
+        print(f"ℹ️ В Qdrant нет настроек, используем 'polza'")
+    except Exception as e:
+        print(f"ℹ️ Не удалось прочитать настройки из Qdrant: {e}")
+
+
+async def save_current_model(model: str):
+    """Сохраняет выбор модели в Qdrant."""
+    global _current_model
+    if model not in ("polza", "local"):
+        raise ValueError(f"Неизвестная модель: {model}")
+    _current_model = model
+    try:
+        await asyncio.to_thread(
+            qdrant.upsert,
+            collection_name=SETTINGS_COLLECTION,
+            points=[models.PointStruct(
+                id=_SETTINGS_MODEL_ID,
+                vector=[1.0],
+                payload={"key": "current_model", "value": model}
+            )]
+        )
+        print(f"✅ Модель сохранена в Qdrant: {model}")
+    except Exception as e:
+        print(f"⚠️ Не удалось сохранить модель в Qdrant: {e}")
 
 if BOTO3_AVAILABLE and all([BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]):
     s3_client = boto3.client(
@@ -416,6 +480,16 @@ async def startup_event():
         )
         print(f"✅ Коллекция '{HISTORY_COLLECTION}' создана")
 
+        # 2.5. Коллекция для настроек
+    try:
+        qdrant.get_collection(SETTINGS_COLLECTION)
+        print(f"✅ Коллекция '{SETTINGS_COLLECTION}' найдена")
+    except Exception:
+        qdrant.create_collection(
+            collection_name=SETTINGS_COLLECTION,
+            vectors_config=models.VectorParams(size=1, distance=models.Distance.COSINE),
+        )
+        print(f"✅ Коллекция '{SETTINGS_COLLECTION}' создана")
     # 3. Индексы для истории
     indices = [
         ("user_id", models.PayloadSchemaType.KEYWORD),
@@ -476,6 +550,7 @@ async def startup_event():
             {"command": "help",  "description": "Справка и примеры"},
             {"command": "menu",  "description": "Меню быстрых действий"},
             {"command": "about", "description": "О Феоне"},
+            {"command": "model", "description": "Показать/сменить модель"},
         ]
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -493,7 +568,8 @@ async def startup_event():
         except Exception as e:
             print(f"⚠️ Не удалось установить меню: {e}")
 
-
+    # 6. Загружаем сохранённую модель из Qdrant  ← ВОТ СЮДА
+    await load_current_model()
 # ==========================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
@@ -801,6 +877,98 @@ async def search_knowledge_max(query: str) -> str:
     ])
 
 
+async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000) -> str:
+    """Вызов локальной модели через Tailscale (OpenAI-совместимый API)."""
+    print(f"🖥️ [LOCAL-LLM] Отправка на {LOCAL_LLM_BASE_URL}, model={LOCAL_LLM_MODEL}")
+    t_start = time.time() if 'time' in dir() else 0
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
+        try:
+            r = await client.post(
+                f"{LOCAL_LLM_BASE_URL}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {LOCAL_LLM_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": LOCAL_LLM_MODEL,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+            if data.get("choices"):
+                content = data["choices"][0].get("message", {}).get("content") or ""
+                print(f"✅ [LOCAL-LLM] Ответ: {len(content)} символов")
+                return content
+            print(f"⚠️ [LOCAL-LLM] Нет choices: {json.dumps(data, ensure_ascii=False)[:300]}")
+            return ""
+        except Exception as e:
+            print(f"❌ [LOCAL-LLM] Ошибка: {type(e).__name__}: {e}")
+            traceback.print_exc()
+            return ""
+
+
+async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000) -> str:
+    """Вызов Polza (DeepSeek V4 Flash)."""
+    print(f"☁️ [POLZA-LLM] Отправка в Polza, model=deepseek-v4-flash")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
+        try:
+            polza_json = {
+                "model": "deepseek/deepseek-v4-flash",
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "thinking": {"type": "disabled"},
+            }
+            r = await client.post(
+                "https://api.polza.ai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {POLZA_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json=polza_json,
+            )
+            r.raise_for_status()
+            data = r.json()
+
+            if "usage" in data:
+                print(f"🔍 [POLZA-LLM] usage={data['usage']}")
+
+            if data.get("choices"):
+                ch = data["choices"][0]
+                msg = ch.get("message", {}) or {}
+                content = msg.get("content") or ""
+                reasoning = msg.get("reasoning") or ""
+                print(f"🔍 [POLZA-LLM] finish={ch.get('finish_reason')}, "
+                      f"content_len={len(content)}, reasoning_len={len(reasoning)}")
+                return content
+            print(f"⚠️ [POLZA-LLM] Нет choices")
+            return ""
+        except Exception as e:
+            print(f"❌ [POLZA-LLM] Ошибка: {type(e).__name__}: {e}")
+            traceback.print_exc()
+            return ""
+
+
+async def call_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000) -> str:
+    """Роутер: вызывает модель согласно текущей настройке."""
+    model = get_current_model()
+    print(f"🎛️ [LLM] Используем модель: {model}")
+    if model == "local":
+        answer = await call_local_llm(messages, temperature, max_tokens)
+        # Fallback на Polza, если локальная упала
+        if not answer or not answer.strip():
+            print(f"⚠️ [LLM] Локальная не ответила — фолбэк на Polza")
+            answer = await call_polza_llm(messages, temperature, max_tokens)
+        return answer
+    else:
+        return await call_polza_llm(messages, temperature, max_tokens)
+
+
 async def local_fallback(payload_text: str, user_id: str, platform: str = "Telegram") -> str:
     print("🚑 [FALLBACK] Yandex недоступен — генерирую ответ локально")
 
@@ -849,57 +1017,13 @@ async def local_fallback(payload_text: str, user_id: str, platform: str = "Teleg
     )
 
     # 6. Polza
-    answer = None
-    async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
-        try:
-            polza_json = {
-                "model": "deepseek/deepseek-v4-flash",
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.7,
-                "max_tokens": 2000,
-                "thinking": {"type": "disabled"},
-            }
-
-            r = await client.post(
-                "https://api.polza.ai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {POLZA_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=polza_json,
-            )
-            r.raise_for_status()
-            data = r.json()
-
-            print(f"🔍 [FALLBACK-POLZA] keys={list(data.keys())}")
-            if "usage" in data:
-                print(f"🔍 [FALLBACK-POLZA] usage={data['usage']}")
-
-            if data.get("choices"):
-                ch = data["choices"][0]
-                finish = ch.get("finish_reason")
-                msg = ch.get("message", {}) or {}
-                content = msg.get("content") or ""
-                reasoning = msg.get("reasoning") or ""
-                print(f"🔍 [FALLBACK-POLZA] finish_reason={finish}")
-                print(f"🔍 [FALLBACK-POLZA] content_len={len(content)}, reasoning_len={len(reasoning)}")
-                if not content and reasoning:
-                    print(f"🔍 [FALLBACK-POLZA] reasoning: {reasoning[:300]}")
-                answer = content
-            else:
-                print(f"⚠️ [FALLBACK-POLZA] Нет choices: {json.dumps(data, ensure_ascii=False)[:300]}")
-                answer = None
-
-            print(f"✅ [FALLBACK] Polza ответил: {len(answer) if answer else 0} символов")
-        except Exception as e:
-            print(f"❌ [FALLBACK] Polza упала: {type(e).__name__}: {e}")
-            traceback.print_exc()
-
-    if not answer or not answer.strip():
-        answer = "Извините, я временно не могу ответить. Попробуйте ещё раз через минуту."
+        # 6. Вызов LLM (Polza или локальная — по текущей настройке)
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": prompt},
+    ]
+    answer = await call_llm(messages, temperature=0.7, max_tokens=2000)
+    print(f"✅ [FALLBACK] Ответ получен: {len(answer) if answer else 0} символов")
 
     # 7. Сохраняем в историю
     try:
@@ -1273,6 +1397,10 @@ async def telegram_webhook(update: dict):
                 f"@{BOT_USERNAME} вопрос\n"
                 f"#феон вопрос\n"
                 "Или ответом на моё сообщение."
+                "Управление моделью:\n"
+                "/model — показать текущую\n"
+                "/model_polza — переключить на Polza\n"
+                "/model_local — переключить на локальную\n\n"
             )
             return {"ok": True}
 
@@ -1298,6 +1426,35 @@ async def telegram_webhook(update: dict):
                 "3️⃣ Философия смысла\n"
                 "   → Зачем человеку страдание?\n\n"
                 "Просто напиши свой вопрос."
+            )
+            return {"ok": True}
+
+                if cmd == "/model":
+            cur = get_current_model()
+            name = "Polza (DeepSeek V4 Flash)" if cur == "polza" else f"Локальная ({LOCAL_LLM_MODEL})"
+            await send_telegram_message(
+                chat_id,
+                f"🤖 Текущая модель: *{name}*\n\n"
+                f"Сменить:\n"
+                f"/model_polza — Polza (DeepSeek V4 Flash)\n"
+                f"/model_local — Локальная (Qwen3.5-4B)"
+            )
+            return {"ok": True}
+
+        if cmd in ("/model_polza", "/полза"):
+            await save_current_model("polza")
+            await send_telegram_message(
+                chat_id,
+                "✅ Модель переключена на *Polza (DeepSeek V4 Flash)*"
+            )
+            return {"ok": True}
+
+        if cmd in ("/model_local", "/локальная", "/модель_локальная"):
+            await save_current_model("local")
+            await send_telegram_message(
+                chat_id,
+                f"✅ Модель переключена на *Локальную* ({LOCAL_LLM_MODEL})\n\n"
+                f"⚠️ Работает только если Render видит твой Tailscale."
             )
             return {"ok": True}
 
