@@ -698,7 +698,7 @@ async def call_yandex_function(message_text: str, user_id: str) -> str:
     print(f"📡 Отправляем в Yandex: message='{message_text[:80]}...', user_id={user_id}")
 
     try:
-         timeout = aiohttp.ClientTimeout(total=15, connect=10)
+        timeout = aiohttp.ClientTimeout(total=15, connect=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(YANDEX_FUNCTION_URL, json=payload, headers=headers) as resp:
                 raw = await resp.text()
