@@ -1454,7 +1454,7 @@ async def telegram_webhook(update: dict):
             await send_telegram_message(
                 chat_id,
                 f"✅ Модель переключена на *Локальную* ({LOCAL_LLM_MODEL})\n\n"
-                f"⚠️ Работает только если Render видит твой Tailscale."
+                f"⚠️ Работает только если Render видит Tailscale."
             )
             return {"ok": True}
 
