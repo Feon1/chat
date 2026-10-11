@@ -498,20 +498,35 @@ async def startup_event():
             {"command": "about", "description": "О Феоне"},
         ]
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                r = await client.post(
-                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setMyCommands",
-                    json={"commands": commands}
-                )
-                print(f"✅ Команды зарегистрированы: {r.json().get('ok')}")
+                
+            r = await client.post(
+                "https://api.polza.ai/v1/chat/completions",
+                headers={...},
+                json={...},
+            )
+            r.raise_for_status()
+            data = r.json()
 
-                r2 = await client.post(
-                    f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setChatMenuButton",
-                    json={"menu_button": {"type": "commands"}}
-                )
-                print(f"✅ Menu button установлен: {r2.json().get('ok')}")
+            # === ДИАГНОСТИКА ===
+            print(f"🔍 [FALLBACK-POLZA] keys={list(data.keys())}")
+            if "usage" in data:
+                print(f"🔍 [FALLBACK-POLZA] usage={data['usage']}")
+            if data.get("choices"):
+                ch = data["choices"][0]
+                finish = ch.get("finish_reason")
+                msg = ch.get("message", {})
+                content = msg.get("content") or ""
+                reasoning = msg.get("reasoning") or ""
+                print(f"🔍 [FALLBACK-POLZA] finish_reason={finish}")
+                print(f"🔍 [FALLBACK-POLZA] content_len={len(content)}, reasoning_len={len(reasoning)}")
+                if not content and reasoning:
+                    print(f"🔍 [FALLBACK-POLZA] reasoning dump: {reasoning[:300]}")
+                answer = content
+            else:
+                print(f"⚠️ [FALLBACK-POLZA] Нет choices: {json.dumps(data, ensure_ascii=False)[:300]}")
         except Exception as e:
-            print(f"⚠️ Не удалось установить меню: {e}")
+            print(f"❌ [FALLBACK] Polza упала: {type(e).__name__}: {e}")
+            traceback.print_exc()
 
 
 # ==========================================
@@ -667,8 +682,9 @@ async def process_message_core(user_id: str, text: str) -> str:
                 json={
                     "model": "deepseek/deepseek-v4-flash",
                     "messages": messages,
-                    "temperature": 0.3,
-                    "max_tokens": 1550,
+                    "temperature": 0.7,
+                    "max_tokens": 2500,
+                    "thinking": {"type": "disabled"},
                 },
             )
             response.raise_for_status()
