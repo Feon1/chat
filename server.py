@@ -877,7 +877,7 @@ async def search_knowledge_max(query: str) -> str:
     ])
 
 
-async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000) -> str:
+async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500) -> str:
     """Вызов локальной модели через Tailscale (OpenAI-совместимый API)."""
     print(f"🖥️ [LOCAL-LLM] Отправка на {LOCAL_LLM_BASE_URL}, model={LOCAL_LLM_MODEL}")
     t_start = time.time() if 'time' in dir() else 0
@@ -993,11 +993,24 @@ async def local_fallback(payload_text: str, user_id: str, platform: str = "Teleg
         return "Извините, я не смог получить вопрос."
 
     # 3. RAG
-    context = await search_knowledge_max(text)
-    if context:
-        print(f"📄 [FALLBACK] RAG-контекст: {len(context)} символов")
+   
+        # 3. RAG — для локальной модели берём меньше контекста
+    from_current = get_current_model()
+    if from_current == "local":
+        print("🖥️ [FALLBACK] Локальная модель — RAG урезан до 1-2 чанков")
+        context = await search_knowledge_max(text)  # она вернёт до 10 чанков
+        if context:
+            # Обрезаем до 1500 символов
+            context = context[:1500]
+            print(f"📄 [FALLBACK] RAG-контекст (сокращён): {len(context)} символов")
+        else:
+            print("⏭️ [FALLBACK] RAG пуст")
     else:
-        print("⏭️ [FALLBACK] RAG пуст")
+        context = await search_knowledge_max(text)
+        if context:
+            print(f"📄 [FALLBACK] RAG-контекст: {len(context)} символов")
+        else:
+            print("⏭️ [FALLBACK] RAG пуст")
 
     # 4. История
     history = get_history(user_id, limit=3)
@@ -1007,18 +1020,27 @@ async def local_fallback(payload_text: str, user_id: str, platform: str = "Teleg
     ])
 
     # 5. Промпт
-    prompt = f"[Источник: {platform}]\n\n"
-    if chat_history_str:
-        prompt += f"История:\n{chat_history_str}\n\n"
-    prompt += f"Вопрос пользователя: {text}\n\n"
-    if context:
-        prompt += f"Справочный материал из базы знаний:\n{context}\n\n"
-    prompt += (
-        "Дай прямой, связный ответ по существу. "
-        "Не используй нумерацию, списки и заголовки. "
-        "Опирайся на философские и богословские идеи из контекста и системного промпта. "
-        "Ответ — не длиннее 1500 символов."
-    )
+    current_model = get_current_model()
+
+    if current_model == "local":
+        # Минимальный промпт для Qwen на телефоне
+        prompt = f"Вопрос: {text}\n\n"
+        if context:
+            prompt += f"Контекст (кратко):\n{context[:1200]}\n\n"
+        prompt += "Ответь коротко, 3-5 предложений, по существу."
+    else:
+        prompt = f"[Источник: {platform}]\n\n"
+        if chat_history_str:
+            prompt += f"История:\n{chat_history_str}\n\n"
+        prompt += f"Вопрос пользователя: {text}\n\n"
+        if context:
+            prompt += f"Справочный материал из базы знаний:\n{context}\n\n"
+        prompt += (
+            "Дай прямой, связный ответ по существу. "
+            "Не используй нумерацию, списки и заголовки. "
+            "Опирайся на философские и богословские идеи из контекста и системного промпта. "
+            "Ответ — не длиннее 1500 символов."
+        )
 
     # 6. Polza
         # 6. Вызов LLM (Polza или локальная — по текущей настройке)
