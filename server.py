@@ -772,7 +772,7 @@ async def get_polza_embedding(text: str) -> list[float]:
 
 
 async def search_knowledge_max(query: str) -> str:
-    """RAG-поиск в xiaozhi_knowledge_max — та же коллекция, что у Yandex."""
+    """RAG-поиск в xiaozhi_knowledge_max — совместимо со старым и новым qdrant-client."""
     if not POLZA_EMBEDDING_API_KEY:
         print("⚠️ [FALLBACK-RAG] Нет POLZA_EMBEDDING_API_KEY — пропускаем RAG")
         return ""
@@ -783,18 +783,32 @@ async def search_knowledge_max(query: str) -> str:
         print(f"⚠️ [FALLBACK-RAG] Эмбеддинг упал: {type(e).__name__}: {e}")
         return ""
 
+    points = []
     try:
-        result = await asyncio.to_thread(
-            qdrant.query_points,
-            collection_name=KNOWLEDGE_MAX_COLLECTION,
-            query=vec,
-            limit=5,
-            with_payload=True,
-            score_threshold=0.40,
-        )
-        points = result.points if hasattr(result, "points") else []
+        # Пробуем новый API
+        if hasattr(qdrant, "query_points"):
+            result = await asyncio.to_thread(
+                qdrant.query_points,
+                collection_name=KNOWLEDGE_MAX_COLLECTION,
+                query=vec,
+                limit=5,
+                with_payload=True,
+                score_threshold=0.40,
+            )
+            points = result.points if hasattr(result, "points") else []
+        else:
+            # Старый API
+            points = await asyncio.to_thread(
+                qdrant.search,
+                collection_name=KNOWLEDGE_MAX_COLLECTION,
+                query_vector=vec,
+                limit=5,
+                with_payload=True,
+                score_threshold=0.40,
+            )
     except Exception as e:
-        print(f"⚠️ [FALLBACK-RAG] Qdrant упал: {e}")
+        print(f"⚠️ [FALLBACK-RAG] Qdrant упал: {type(e).__name__}: {e}")
+        traceback.print_exc()
         return ""
 
     if not points:
