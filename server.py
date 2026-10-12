@@ -167,13 +167,16 @@ if BOTO3_AVAILABLE and all([BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KE
 else:
     s3_client = None
 
+
+
+# Загружаем промпт только из переменных окружения
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT")
-try:
-    with open("system_prompt.txt", "r", encoding="utf-8") as f:
-        SYSTEM_PROMPT = f.read().strip()
-        print(f"✅ Системный промпт загружен из файла")
-except FileNotFoundError:
-    print("ℹ️ Используется SYSTEM_PROMPT из переменной окружения")
+
+if not SYSTEM_PROMPT or not SYSTEM_PROMPT.strip():
+    print("⚠️ SYSTEM_PROMPT не задан в env — использую дефолт")
+    SYSTEM_PROMPT = "Ты — Феон, верующий ИИ."
+else:
+    print(f"✅ SYSTEM_PROMPT из env ({len(SYSTEM_PROMPT)} симв.)")
 
 
 _ssl_context = ssl.create_default_context(cafile=certifi.where())
