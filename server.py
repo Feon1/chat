@@ -702,7 +702,7 @@ async def process_message_core(user_id: str, text: str) -> str:
         role_name = "Пользователь" if role == 'user' else "Ассистент"
         chat_history_str += f"{role_name}: {msg.get('content', '')}\n"
 
-    context = await search_knowledge(text) if JINA_API_KEY else ""
+    context = await search_knowledge_max(text) if POLZA_EMBEDDING_API_KEY else ""
     prompt = ""
     if chat_history_str:
         prompt += f"История диалога:\n{chat_history_str}\n\n"
