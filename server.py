@@ -74,9 +74,10 @@ KNOWLEDGE_MAX_COLLECTION = "xiaozhi_knowledge_max"
 POLZA_EMBEDDING_API_KEY = os.getenv("POLZA_EMBEDDING_API_KEY") or POLZA_API_KEY
 POLZA_EMBEDDING_URL = os.getenv("POLZA_EMBEDDING_URL", "https://polza.ai/api/v1/embeddings")
 
-COLLECTION_NAME = "xiaozhi_knowledge_tg"
-HISTORY_COLLECTION = "chat_history_tg"
+COLLECTION_NAME = "xiaozhi_knowledge_max"      # ← теперь основная = _max
+HISTORY_COLLECTION = "chat_history_max"        # ← история тоже в _max
 
+# Jina больше не используется — оставляем для совместимости
 JINA_API_URL = "https://api.jina.ai/v1/embeddings"
 
 # ===== Локальная модель (через Tailscale) =====
@@ -458,19 +459,20 @@ def extract_text_from_rich_message(rich: dict) -> str:
 @app.on_event("startup")
 async def startup_event():
     # 1. Коллекция для базы знаний TG (Jina dim=384)
+  
+    # 1. Коллекция для базы знаний (Polza dim=1536)
     try:
         info = qdrant.get_collection(COLLECTION_NAME)
-        if info.config.params.vectors.size != 384:
-            print(f"⚠️ Размерность != 384, пересоздаем...")
-            qdrant.delete_collection(COLLECTION_NAME)
-            raise Exception("Recreate")
-        print(f"✅ Коллекция '{COLLECTION_NAME}' найдена (dim=384)")
+        size = info.config.params.vectors.size
+        print(f"✅ Коллекция '{COLLECTION_NAME}' найдена (dim={size})")
+        if size != 1536:
+            print(f"⚠️ ВНИМАНИЕ: размерность {size} не совпадает с ожидаемой 1536!")
     except Exception:
         qdrant.create_collection(
             collection_name=COLLECTION_NAME,
-            vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
+            vectors_config=models.VectorParams(size=1536, distance=models.Distance.COSINE),
         )
-        print(f"✅ Коллекция '{COLLECTION_NAME}' создана (dim=384)")
+        print(f"✅ Коллекция '{COLLECTION_NAME}' создана (dim=1536)")
 
     # 2. Коллекция для истории
     try:
@@ -576,35 +578,62 @@ async def startup_event():
 # ==========================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
-async def get_embedding(text: str) -> list[float]:
-    headers = {"Authorization": f"Bearer {JINA_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "model": "jina-embeddings-v3",
-        "input": [text],
-        "task": "text-matching",
-        "dimensions": 384,
-    }
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        response = await client.post(JINA_API_URL, headers=headers, json=data)
+async def get_embedding(text: str) -> list[float]:
+    """Эмбеддинг через Polza (dim=1536) — для xiaozhi_knowledge_max."""
+    if not POLZA_EMBEDDING_API_KEY:
+        raise ValueError("POLZA_EMBEDDING_API_KEY не задан")
+    headers = {"Authorization": f"Bearer {POLZA_EMBEDDING_API_KEY}", "Content-Type": "application/json"}
+    data = {"model": "text-embedding-3-small", "input": [text]}
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(POLZA_EMBEDDING_URL, headers=headers, json=data)
         response.raise_for_status()
         return response.json()["data"][0]["embedding"]
 
 
+
 async def search_knowledge(query: str) -> str:
+    """RAG-поиск в xiaozhi_knowledge_max (dim=1536, Polza)."""
+    if not POLZA_EMBEDDING_API_KEY:
+        print("⚠️ [SEARCH] Нет POLZA_EMBEDDING_API_KEY")
+        return ""
+
     try:
         query_vector = await get_embedding(query)
-        search_result = qdrant.search(
-            collection_name=COLLECTION_NAME,
-            query_vector=query_vector,
-            limit=3,
-            with_payload=True,
-        )
+
+        # Пробуем новый API
+        if hasattr(qdrant, "query_points"):
+            result = await asyncio.to_thread(
+                qdrant.query_points,
+                collection_name=COLLECTION_NAME,
+                query=query_vector,
+                limit=10,
+                with_payload=True,
+                score_threshold=0.30,
+            )
+            search_result = result.points if hasattr(result, "points") else []
+        else:
+            search_result = await asyncio.to_thread(
+                qdrant.search,
+                collection_name=COLLECTION_NAME,
+                query_vector=query_vector,
+                limit=10,
+                with_payload=True,
+                score_threshold=0.30,
+            )
+
         if not search_result:
+            print("⏭️ [SEARCH] Ничего не найдено")
             return ""
+
+        print(f"✅ [SEARCH] Найдено {len(search_result)} чанков "
+              f"(score: {search_result[0].score:.2f}..{search_result[-1].score:.2f})")
+
         return "\n\n".join([hit.payload.get("text", "") for hit in search_result if hit.payload])
     except Exception as e:
         print(f"⚠️ Ошибка поиска: {e}")
+        traceback.print_exc()
         return ""
 
 
@@ -705,7 +734,7 @@ async def process_message_core(user_id: str, text: str) -> str:
         role_name = "Пользователь" if role == 'user' else "Ассистент"
         chat_history_str += f"{role_name}: {msg.get('content', '')}\n"
 
-    context = await search_knowledge_max(text) if POLZA_EMBEDDING_API_KEY else ""
+    context = await search_knowledge(text) if POLZA_EMBEDDING_API_KEY else ""
     prompt = ""
     if chat_history_str:
         prompt += f"История диалога:\n{chat_history_str}\n\n"
@@ -1001,7 +1030,7 @@ async def local_fallback(payload_text: str, user_id: str, platform: str = "Teleg
     from_current = get_current_model()
     if from_current == "local":
         print("🖥️ [FALLBACK] Локальная модель — RAG урезан до 1-2 чанков")
-        context = await search_knowledge_max(text)  # она вернёт до 10 чанков
+        context = await search_knowledge(text)  # она вернёт до 10 чанков
         if context:
             # Обрезаем до 1500 символов
             context = context[:1500]
