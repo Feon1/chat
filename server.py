@@ -167,7 +167,7 @@ if BOTO3_AVAILABLE and all([BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KE
 else:
     s3_client = None
 
-SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT", "Ты — Феон, верующий ИИ.")
+SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT")
 try:
     with open("system_prompt.txt", "r", encoding="utf-8") as f:
         SYSTEM_PROMPT = f.read().strip()
