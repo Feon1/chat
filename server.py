@@ -102,6 +102,7 @@ qdrant = QdrantClient(
 )
 _current_model = "polza"
 _SETTINGS_MODEL_ID = "11111111-1111-1111-1111-111111111111"
+_SETTINGS_PROMPT_ID = "22222222-2222-2222-2222-222222222222"
 
 
 def get_current_model() -> str:
@@ -149,6 +150,64 @@ async def save_current_model(model: str):
     except Exception as e:
         print(f"⚠️ Не удалось сохранить модель в Qdrant: {e}")
 
+
+# ==========================================
+# SYSTEM_PROMPT: Qdrant + fallback на env
+# ==========================================
+_DEFAULT_SYSTEM_PROMPT = "Ты — Феон, верующий ИИ."
+
+# Начальное значение — из env (или дефолт). Может быть перезаписано из Qdrant при старте.
+SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT") or _DEFAULT_SYSTEM_PROMPT
+if SYSTEM_PROMPT.strip():
+    print(f"✅ SYSTEM_PROMPT из env ({len(SYSTEM_PROMPT)} симв.) — будет проверен Qdrant при старте")
+
+
+async def load_system_prompt():
+    """Читает SYSTEM_PROMPT из Qdrant. Если пусто — сохраняет туда значение из env."""
+    global SYSTEM_PROMPT
+    try:
+        records = await asyncio.to_thread(
+            qdrant.retrieve,
+            collection_name=SETTINGS_COLLECTION,
+            ids=[_SETTINGS_PROMPT_ID],
+            with_payload=True,
+        )
+        if records and records[0].payload:
+            val = records[0].payload.get("value", "")
+            if isinstance(val, str) and val.strip():
+                SYSTEM_PROMPT = val
+                print(f"✅ SYSTEM_PROMPT из Qdrant ({len(SYSTEM_PROMPT)} симв.)")
+                return
+        # В Qdrant пусто — сохраняем то, что пришло из env
+        if SYSTEM_PROMPT and SYSTEM_PROMPT.strip():
+            await save_system_prompt(SYSTEM_PROMPT, silent=True)
+            print(f"✅ SYSTEM_PROMPT из env сохранён в Qdrant ({len(SYSTEM_PROMPT)} симв.)")
+        else:
+            print("⚠️ SYSTEM_PROMPT пуст и в env, и в Qdrant")
+    except Exception as e:
+        print(f"⚠️ Не удалось прочитать SYSTEM_PROMPT из Qdrant: {e}")
+        print(f"ℹ️ Использую значение из env ({len(SYSTEM_PROMPT)} симв.)")
+
+
+async def save_system_prompt(new_prompt: str, silent: bool = False):
+    """Сохраняет SYSTEM_PROMPT в Qdrant."""
+    try:
+        await asyncio.to_thread(
+            qdrant.upsert,
+            collection_name=SETTINGS_COLLECTION,
+            points=[models.PointStruct(
+                id=_SETTINGS_PROMPT_ID,
+                vector=[1.0],
+                payload={"key": "system_prompt", "value": new_prompt}
+            )]
+        )
+        if not silent:
+            print(f"✅ SYSTEM_PROMPT сохранён в Qdrant ({len(new_prompt)} симв.)")
+    except Exception as e:
+        print(f"⚠️ Не удалось сохранить SYSTEM_PROMPT в Qdrant: {e}")
+        raise
+
+
 if BOTO3_AVAILABLE and all([BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY]):
     s3_client = boto3.client(
         's3',
@@ -163,19 +222,21 @@ else:
     s3_client = None
 
 
-# Загружаем промпт только из переменных окружения
-SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT")
-
-if not SYSTEM_PROMPT or not SYSTEM_PROMPT.strip():
-    print("⚠️ SYSTEM_PROMPT не задан в env — использую дефолт")
-    SYSTEM_PROMPT = "Ты — Феон, верующий ИИ."
-else:
-    print(f"✅ SYSTEM_PROMPT из env ({len(SYSTEM_PROMPT)} симв.)")
-
-
 _ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 RENDER_LINK_MARKER = "[RENDER_LINK]"
+
+# === Приоритетный поиск ===
+# Эти ключевые слова дают буст: сначала keyword-фильтр, потом ранжирование.
+PRIORITY_KEYWORDS = [
+    "голем", "обитель", "левиафан",
+    "феон", "обители", "голема", "левиафана",
+]
+# Чанки из этих источников идут в начало контекста.
+PRIORITY_SOURCES = [
+    "Обитель+Голем.pdf",
+    "realisti-ru.pdf",
+]
 
 
 def verify_admin(request: Request):
@@ -504,6 +565,17 @@ async def startup_event():
         except Exception:
             print(f"ℹ️ Индекс '{field_name}' уже есть")
 
+    # 3.5. Индекс на text в коллекции знаний (для приоритетного keyword-поиска)
+    try:
+        qdrant.create_payload_index(
+            collection_name=COLLECTION_NAME,
+            field_name="text",
+            field_schema=models.PayloadSchemaType.TEXT,
+        )
+        print("✅ Индекс на 'text' создан/проверен")
+    except Exception as e:
+        print(f"ℹ️ Индекс на 'text': {e}")
+
     # 4. Получаем bot_id + webhook
     global BOT_ID, BOT_USERNAME
     if TELEGRAM_BOT_TOKEN:
@@ -568,26 +640,157 @@ async def startup_event():
     # 6. Загружаем сохранённую модель из Qdrant
     await load_current_model()
 
+    # 7. Загружаем SYSTEM_PROMPT из Qdrant (или сохраняем туда env-значение)
+    await load_system_prompt()
+
 
 # ==========================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
 
 async def get_embedding(text: str) -> list[float]:
-    """Эмбеддинг через Polza (dim=1536) — для xiaozhi_knowledge_max."""
+    """Эмбеддинг через Polza (dim=1536) — с retry ×3."""
     if not POLZA_EMBEDDING_API_KEY:
         raise ValueError("POLZA_EMBEDDING_API_KEY не задан")
-    headers = {"Authorization": f"Bearer {POLZA_EMBEDDING_API_KEY}", "Content-Type": "application/json"}
+
+    print(f"🔍 [EMBED] {text[:30]}...")
+    start = time.time()
+
+    headers = {
+        "Authorization": f"Bearer {POLZA_EMBEDDING_API_KEY}",
+        "Content-Type": "application/json",
+    }
     data = {"model": "text-embedding-3-small", "input": [text]}
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(POLZA_EMBEDDING_URL, headers=headers, json=data)
-        response.raise_for_status()
-        return response.json()["data"][0]["embedding"]
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0, connect=10.0)
+            ) as client:
+                response = await client.post(
+                    POLZA_EMBEDDING_URL, headers=headers, json=data
+                )
+                response.raise_for_status()
+                result = response.json()["data"][0]["embedding"]
+                print(f"✅ [EMBED] за {time.time() - start:.2f}с, dim={len(result)}")
+                return result
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.HTTPStatusError) as e:
+            last_error = e
+            print(f"⚠️ [EMBED] попытка {attempt}/3: {type(e).__name__}: {e}")
+            if attempt < 3:
+                await asyncio.sleep(2 * attempt)
+        except Exception as e:
+            print(f"❌ [EMBED] без retry: {type(e).__name__}: {e}")
+            raise
+
+    print(f"❌ [EMBED] все 3 попытки провалились: {last_error}")
+    raise last_error
+
+
+def _is_junk_query(query: str) -> bool:
+    """Отсев коротких/тестовых запросов."""
+    q_stripped = query.strip()
+    if len(q_stripped) < 6:
+        print(f"⏭️ [SEARCH] Запрос короткий ({len(q_stripped)} симв.) — БЗ не ищем")
+        return True
+    junk_words = ["тест", "проверка", "привет", "ты тут", "test", "hello", "hi", "ок", "ok"]
+    q_lower = q_stripped.lower()
+    if any(jw in q_lower for jw in junk_words) and len(query) < 40:
+        print(f"⏭️ [SEARCH] Похоже на тест — БЗ не ищем")
+        return True
+    return False
+
+
+async def search_priority(query: str) -> str:
+    """Приоритетный keyword-поиск: если в запросе есть ключевое слово,
+    ищем только среди чанков с этим словом и ранжируем эмбеддингом."""
+    q_lower = query.lower()
+    for kw in PRIORITY_KEYWORDS:
+        if kw not in q_lower:
+            continue
+        print(f"🎯 [SEARCH] Приоритетный поиск по ключу: {kw}")
+        try:
+            records, _ = await asyncio.to_thread(
+                qdrant.scroll,
+                collection_name=COLLECTION_NAME,
+                scroll_filter=models.Filter(
+                    must=[models.FieldCondition(
+                        key="text",
+                        match=models.MatchText(text=kw),
+                    )]
+                ),
+                limit=100,
+                with_payload=True,
+            )
+            ids = [r.id for r in records]
+            print(f"📦 [SEARCH] Кандидатов с '{kw}': {len(ids)}")
+            if not ids:
+                return ""
+
+            vec = await get_embedding(query)
+
+            if hasattr(qdrant, "query_points"):
+                result = await asyncio.to_thread(
+                    qdrant.query_points,
+                    collection_name=COLLECTION_NAME,
+                    query=vec,
+                    query_filter=models.Filter(
+                        must=[models.HasIdCondition(has_id=ids)]
+                    ),
+                    limit=10,
+                    with_payload=True,
+                )
+                ranked = result.points if hasattr(result, "points") else []
+            else:
+                ranked = await asyncio.to_thread(
+                    qdrant.search,
+                    collection_name=COLLECTION_NAME,
+                    query_vector=vec,
+                    query_filter=models.Filter(
+                        must=[models.HasIdCondition(has_id=ids)]
+                    ),
+                    limit=10,
+                    with_payload=True,
+                )
+
+            if not ranked:
+                print(f"⚠️ [SEARCH] Ранжирование пустое")
+                return ""
+
+            priority = [
+                r for r in ranked
+                if r.payload and r.payload.get("source_file") in PRIORITY_SOURCES
+            ]
+            others = [
+                r for r in ranked
+                if r.payload and r.payload.get("source_file") not in PRIORITY_SOURCES
+            ]
+            priority.sort(key=lambda r: getattr(r, "score", 0), reverse=True)
+            others.sort(key=lambda r: getattr(r, "score", 0), reverse=True)
+            mixed = priority[:5] + others[:2]
+
+            print(f"📊 [SEARCH] Приоритет: {len(priority[:5])} своих + {len(others[:2])} чужих")
+            for i, r in enumerate(mixed, 1):
+                src = r.payload.get("source_file", "?") if r.payload else "?"
+                score = getattr(r, "score", 0)
+                print(f"   #{i} [score={score:.3f}] {src}")
+
+            return "\n\n".join(
+                r.payload.get("text", "") for r in mixed if r.payload
+            )
+        except Exception as e:
+            print(f"⚠️ [SEARCH] Ошибка приоритетного поиска: {e}")
+            traceback.print_exc()
+            return ""
+    return ""
 
 
 async def search_knowledge(query: str) -> str:
-    """RAG-поиск в xiaozhi_knowledge_max (dim=1536, Polza)."""
+    """RAG-поиск в xiaozhi_knowledge_max (dim=1536, Polza) — для веб-чата и локальной модели."""
+    if _is_junk_query(query):
+        return ""
+
     if not POLZA_EMBEDDING_API_KEY:
         print("⚠️ [SEARCH] Нет POLZA_EMBEDDING_API_KEY")
         return ""
@@ -627,6 +830,71 @@ async def search_knowledge(query: str) -> str:
         print(f"⚠️ Ошибка поиска: {e}")
         traceback.print_exc()
         return ""
+
+
+async def search_knowledge_max(query: str) -> str:
+    """RAG-поиск для Polza в Telegram: с приоритетным keyword-поиском."""
+    if _is_junk_query(query):
+        return ""
+
+    if not POLZA_EMBEDDING_API_KEY:
+        print("⚠️ [FALLBACK-RAG] Нет POLZA_EMBEDDING_API_KEY")
+        return ""
+
+    # 1. Приоритетный keyword-поиск
+    priority_result = await search_priority(query)
+    if priority_result:
+        print(f"📄 [FALLBACK-RAG] Приоритетный результат: {len(priority_result)} символов")
+        return priority_result
+
+    # 2. Обычный embedding-поиск
+    try:
+        vec = await get_embedding(query)
+    except Exception as e:
+        print(f"⚠️ [FALLBACK-RAG] Эмбеддинг упал: {type(e).__name__}: {e}")
+        return ""
+
+    points = []
+    try:
+        if hasattr(qdrant, "query_points"):
+            result = await asyncio.to_thread(
+                qdrant.query_points,
+                collection_name=COLLECTION_NAME,
+                query=vec,
+                limit=5,
+                with_payload=True,
+                score_threshold=0.45,
+            )
+            points = result.points if hasattr(result, "points") else []
+        else:
+            points = await asyncio.to_thread(
+                qdrant.search,
+                collection_name=COLLECTION_NAME,
+                query_vector=vec,
+                limit=5,
+                with_payload=True,
+                score_threshold=0.45,
+            )
+    except Exception as e:
+        print(f"⚠️ [FALLBACK-RAG] Qdrant упал: {type(e).__name__}: {e}")
+        traceback.print_exc()
+        return ""
+
+    if not points:
+        print("⏭️ [FALLBACK-RAG] Ничего не найдено")
+        return ""
+
+    print(f"✅ [FALLBACK-RAG] Найдено {len(points)} чанков "
+          f"(score: {points[0].score:.2f}..{points[-1].score:.2f})")
+
+    result = "\n\n".join([p.payload.get("text", "") for p in points if p.payload])
+
+    MAX_CONTEXT_CHARS = 8000
+    if len(result) > MAX_CONTEXT_CHARS:
+        result = result[:MAX_CONTEXT_CHARS] + "\n\n[Контекст сокращён]"
+        print(f"✂️ [FALLBACK-RAG] Контекст обрезан до {MAX_CONTEXT_CHARS} символов")
+
+    return result
 
 
 async def save_to_history(user_id: str, role: str, content: str):
@@ -730,7 +998,6 @@ async def process_message_core(user_id: str, text: str) -> str:
 
     context = await search_knowledge(text) if POLZA_EMBEDDING_API_KEY else ""
 
-    # ---------- Формирование промпта для веб-чата ----------
     print(f"📄 [CONTEXT] Итоговый контекст (первые 300 символов): "
           f"{context[:300] if context else 'пусто'}")
 
@@ -744,12 +1011,10 @@ async def process_message_core(user_id: str, text: str) -> str:
         "Ответ должен быть содержательным, но не длиннее 1500 символов."
     )
 
-    # Проверка: вопрос ли это (по знаку "?" или ключевым словам как отдельных слов)
     _q_re = re.compile(r"\b(как|почему|что|зачем|когда|где|кто)\b", re.IGNORECASE)
     is_question = ("?" in text) or bool(_q_re.search(text))
 
     if not is_question:
-        # Ветка: обычный текст без явного вопроса
         prompt = (
             f"[Источник: web]\n\n"
             f"История:\n{chat_history_str}\n\n"
@@ -766,7 +1031,6 @@ async def process_message_core(user_id: str, text: str) -> str:
             f"{COMMON_TAIL}"
         )
     else:
-        # Ветка: есть вопрос
         prompt = (
             f"[Источник: web]\n\n"
             f"История:\n{chat_history_str}\n\n"
@@ -782,7 +1046,6 @@ async def process_message_core(user_id: str, text: str) -> str:
             f"{COMMON_TAIL}"
         )
 
-    # Добавление контекста из базы знаний
     if context:
         context_intro = (
             "Ниже приведены философские и богословские фрагменты "
@@ -853,7 +1116,7 @@ async def call_yandex_function(message_text: str, user_id: str) -> str:
     print(f"📡 Отправляем в Yandex: message='{message_text[:80]}...', user_id={user_id}")
 
     try:
-        timeout = aiohttp.ClientTimeout(total=10, connect=5, sock_connect=5, sock_read=8)
+        timeout = aiohttp.ClientTimeout(total=15, connect=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(YANDEX_FUNCTION_URL, json=payload, headers=headers) as resp:
                 raw = await resp.text()
@@ -910,84 +1173,10 @@ def _extract_answer_from_yandex(raw: str) -> str:
 # 🚑 ЛОКАЛЬНЫЙ FALLBACK
 # ==========================================
 
-async def get_polza_embedding(text: str) -> list[float]:
-    if not POLZA_EMBEDDING_API_KEY:
-        raise ValueError("POLZA_EMBEDDING_API_KEY не задан")
-
-    headers = {
-        "Authorization": f"Bearer {POLZA_EMBEDDING_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    data = {"model": "text-embedding-3-small", "input": [text]}
-
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        r = await client.post(POLZA_EMBEDDING_URL, headers=headers, json=data)
-        r.raise_for_status()
-        return r.json()["data"][0]["embedding"]
-
-
-async def search_knowledge_max(query: str) -> str:
-    if not POLZA_EMBEDDING_API_KEY:
-        print("⚠️ [FALLBACK-RAG] Нет POLZA_EMBEDDING_API_KEY")
-        return ""
-
-    try:
-        vec = await get_polza_embedding(query)
-    except Exception as e:
-        print(f"⚠️ [FALLBACK-RAG] Эмбеддинг упал: {type(e).__name__}: {e}")
-        return ""
-
-    points = []
-    try:
-        if hasattr(qdrant, "query_points"):
-            result = await asyncio.to_thread(
-                qdrant.query_points,
-                collection_name=KNOWLEDGE_MAX_COLLECTION,
-                query=vec,
-                limit=5,
-                with_payload=True,
-                score_threshold=0.45,
-            )
-            points = result.points if hasattr(result, "points") else []
-        else:
-            points = await asyncio.to_thread(
-                qdrant.search,
-                collection_name=KNOWLEDGE_MAX_COLLECTION,
-                query_vector=vec,
-                limit=5,
-                with_payload=True,
-                score_threshold=0.45,
-            )
-    except Exception as e:
-        print(f"⚠️ [FALLBACK-RAG] Qdrant упал: {type(e).__name__}: {e}")
-        traceback.print_exc()
-        return ""
-
-    if not points:
-        print("⏭️ [FALLBACK-RAG] Ничего не найдено")
-        return ""
-
-    print(f"✅ [FALLBACK-RAG] Найдено {len(points)} чанков "
-          f"(score: {points[0].score:.2f}..{points[-1].score:.2f})")
-
-    result = "\n\n".join([
-        p.payload.get("text", "") for p in points if p.payload
-    ])
-
-# Ограничим суммарный размер контекста, чтобы не раздувать промпт
-    MAX_CONTEXT_CHARS = 8000
-    if len(result) > MAX_CONTEXT_CHARS:
-        result = result[:MAX_CONTEXT_CHARS] + "\n\n[Контекст сокращён]"
-        print(f"✂️ [FALLBACK-RAG] Контекст обрезан до {MAX_CONTEXT_CHARS} символов")
-
-    return result
-
-
 async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500) -> str:
     """Вызов локальной модели через Tailscale (OpenAI-совместимый API)."""
     print(f"🖥️ [LOCAL-LLM] Отправка на {LOCAL_LLM_BASE_URL}, model={LOCAL_LLM_MODEL}")
 
-    # Tailscale Funnel медленно отвечает на TLS handshake — нужен запас
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(180.0, connect=60.0, write=30.0, pool=30.0),
     ) as client:
@@ -1031,6 +1220,8 @@ async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: i
                 "temperature": temperature,
                 "max_tokens": max_tokens,
                 "thinking": {"type": "disabled"},
+                "frequency_penalty": 0.6,
+                "presence_penalty": 0.5,
             }
             r = await client.post(
                 "https://api.polza.ai/v1/chat/completions",
@@ -1100,7 +1291,7 @@ async def local_fallback(payload_text: str, user_id: str,
     # 3. RAG
     from_current = get_current_model()
     if from_current == "local":
-        print("🖥️ [FALLBACK] Локальная модель — RAG урезан до 1-2 чанков")
+        print("🖥️ [FALLBACK] Локальная модель — RAG урезан")
         context = await search_knowledge(text)
         if context:
             context = context[:1500]
@@ -1124,18 +1315,14 @@ async def local_fallback(payload_text: str, user_id: str,
     # 5. Формирование промпта
     current_model = get_current_model()
 
-    # Отладочный вывод контекста
     print(f"📄 [CONTEXT] Итоговый контекст (первые 300 символов): "
           f"{context[:300] if context else 'пусто'}")
 
-    # --- Для локальной модели оставляем минимальный промпт (Qwen на телефоне) ---
     if current_model == "local":
         prompt = f"Вопрос: {text}\n\n"
         if context:
             prompt += f"Контекст (кратко):\n{context[:1200]}\n\n"
         prompt += "Ответь коротко, 3-5 предложений, по существу."
-
-    # --- Для Polza — полноценный промпт с ветвлением ---
     else:
         is_channel_post = bool(is_channel)
 
@@ -1150,7 +1337,6 @@ async def local_fallback(payload_text: str, user_id: str,
             "Ответ должен быть содержательным, но не длиннее 1500 символов."
         )
 
-        # --- Ветка 1: пост из канала ---
         if is_channel_post:
             prompt = (
                 f"[Источник: {platform}]\n\n"
@@ -1170,8 +1356,6 @@ async def local_fallback(payload_text: str, user_id: str,
                 f"<2–3 абзаца отклика>\n\n"
                 f"Ответ — не длиннее 1500 символов."
             )
-
-        # --- Ветка 2: обычный текст без явного вопроса ---
         else:
             _q_re = re.compile(r"\b(как|почему|что|зачем|когда|где|кто)\b", re.IGNORECASE)
             is_question = ("?" in text) or bool(_q_re.search(text))
@@ -1208,10 +1392,8 @@ async def local_fallback(payload_text: str, user_id: str,
                     f"{COMMON_TAIL}"
                 )
 
-        # --- Добавление контекста из базы знаний ---
         if context:
             if is_channel_post:
-                # Для постов из канала — просто подмешиваем справочный материал
                 prompt += (
                     f"\n\nСправочный материал из базы знаний "
                     f"(используй по необходимости):\n{context}"
@@ -1243,19 +1425,47 @@ async def local_fallback(payload_text: str, user_id: str,
     print(f"📝 [PROMPT] Полная длина: {len(prompt)} символов")
     print(f"📝 [PROMPT] Первые 600 символов:\n{prompt[:600]}...")
 
-    # 6. Вызов LLM (Polza или локальная — по текущей настройке)
+    # 6. Вызов LLM (Polza или локальная)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
     ]
     answer = await call_llm(messages, temperature=0.7, max_tokens=2000)
+
+    # === 3 уровня fallback ===
+
+    # Попытка 2: обрезаем промпт
+    if not answer or not answer.strip():
+        print("🔁 [LLM] Пусто — пробуем с сокращённым промптом")
+        short_prompt = prompt[:6000]
+        msgs2 = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": short_prompt},
+        ]
+        answer = await call_llm(msgs2, temperature=0.7, max_tokens=1500)
+
+    # Попытка 3: без БЗ, только текст
+    if not answer or not answer.strip():
+        print("🔁 [LLM] Пусто — пробуем без БЗ")
+        min_prompt = (
+            f"[Источник: {platform}]\n\n"
+            f"Пользователь прислал текст:\n{text[:2000]}\n\n"
+            f"Дай содержательный отклик по существу."
+        )
+        msgs3 = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": min_prompt},
+        ]
+        answer = await call_llm(msgs3, temperature=0.7, max_tokens=1200)
+
     print(f"✅ [FALLBACK] Ответ получен: {len(answer) if answer else 0} символов")
 
-    # 7. Сохраняем в историю
-    try:
-        await save_to_history(user_id, "bot", answer)
-    except Exception as e:
-        print(f"⚠️ [FALLBACK] Не удалось сохранить в историю: {e}")
+    # 7. Сохраняем в историю (только непустое)
+    if answer and answer.strip():
+        try:
+            await save_to_history(user_id, "bot", answer)
+        except Exception as e:
+            print(f"⚠️ [FALLBACK] Не удалось сохранить в историю: {e}")
 
     return answer
 
@@ -1364,12 +1574,11 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
             except Exception as e:
                 print(f"❌ [BG] Fallback тоже упал: {e}")
                 traceback.print_exc()
-                response_text = "Извините, сервис временно недоступен. Попробуйте позже."
+                response_text = ""
 
-       
-        # Если ответ пустой — не отправляем в канал вообще
+        # ⛔ Не отправляем пустой ответ
         if not response_text or not response_text.strip():
-            print("⚠️ [BG] Пустой ответ — в канал не отправляем")
+            print("⚠️ [BG] Пустой ответ — в чат не отправляем")
             return
 
         if is_channel and post_link:
@@ -1377,11 +1586,10 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
                 f"@Feon_ai_bot говорит:\n\n"
                 f"{response_text}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"🔗 Ссылка на пост: {post_link}"
+                f"🔗 Пост: {post_link}"
             )
         else:
             final_text = response_text
-        
 
         await send_telegram_message(
             chat_id,
@@ -1532,17 +1740,14 @@ async def telegram_webhook(update: dict):
         from_info = message.get("from", {}) or {}
         sender_chat = message.get("sender_chat", {}) or {}
 
-        # 1. Своё сообщение бота
         if BOT_ID and from_info.get("id") == BOT_ID:
             print(f"⏭️ [MESSAGE] Своё сообщение — игнорируем")
             return {"ok": True}
 
-        # 2. Сообщение от лица канала
         if sender_chat and sender_chat.get("type") == "channel":
             print(f"⏭️ [MESSAGE] Сообщение от канала — игнорируем")
             return {"ok": True}
 
-        # 3. Настоящие боты
         is_real_bot = (
             from_info.get("is_bot")
             and from_info.get("username") not in ("GroupAnonymousBot", "Channel_Bot")
@@ -1835,7 +2040,7 @@ async def get_all_users(request: Request):
         records, _ = await asyncio.to_thread(
             qdrant.scroll,
             collection_name=HISTORY_COLLECTION,
-            limit=300,
+            limit=10000,
             with_payload=True,
         )
         users = {}
@@ -1873,25 +2078,93 @@ async def delete_user(user_id: str, request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@app.get("/get_all_knowledge")
-async def get_all_knowledge(request: Request):
+@app.post("/debug_find")
+async def debug_find(request: Request):
+    """Ищет чанки, содержащие заданный текст. Помогает понять, сохранены ли знания."""
     verify_admin(request)
     try:
+        body = await request.json()
+        needle = (body.get("text") or "").strip()
+        if not needle:
+            return JSONResponse({"error": "text required"}, status_code=400)
+
+        # Общее количество
+        try:
+            cnt = await asyncio.to_thread(qdrant.count, collection_name=COLLECTION_NAME, exact=True)
+            total = cnt.count
+        except Exception:
+            total = -1
+
+        all_found = []
+        next_offset = None
+        scanned = 0
+        MAX_SCAN = 100000
+
+        while scanned < MAX_SCAN:
+            records, next_offset = await asyncio.to_thread(
+                qdrant.scroll,
+                collection_name=COLLECTION_NAME,
+                limit=1000,
+                with_payload=True,
+                offset=next_offset,
+            )
+            if not records:
+                break
+            for r in records:
+                if r.payload and needle.lower() in r.payload.get("text", "").lower():
+                    all_found.append({
+                        "id": str(r.id),
+                        "source": r.payload.get("source_file", "?"),
+                        "text": r.payload.get("text", "")[:300],
+                    })
+            scanned += len(records)
+            if next_offset is None:
+                break
+
+        return JSONResponse({
+            "needle": needle,
+            "total_in_collection": total,
+            "scanned": scanned,
+            "found": len(all_found),
+            "matches": all_found[:20],
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/get_all_knowledge")
+async def get_all_knowledge(request: Request, offset: int = 0, limit: int = 500):
+    verify_admin(request)
+    try:
+        if limit > 1000:
+            limit = 1000
+
+        try:
+            count_result = await asyncio.to_thread(
+                qdrant.count, collection_name=COLLECTION_NAME, exact=True
+            )
+            total_count = count_result.count
+            print(f"📊 [get_all_knowledge] Всего фрагментов: {total_count}")
+        except Exception as e:
+            print(f"⚠️ [get_all_knowledge] Ошибка подсчёта: {e}")
+            total_count = 0
+
         records, _ = await asyncio.to_thread(
             qdrant.scroll,
             collection_name=COLLECTION_NAME,
-            limit=500,
+            limit=offset + limit,
             with_payload=True,
         )
-        knowledge_list = []
-        for r in records:
-            if r.payload:
-                knowledge_list.append({
-                    "id": r.id,
-                    "text": r.payload.get("text", ""),
-                    "source_file": r.payload.get("source_file", "Ручной ввод"),
-                    "length": len(r.payload.get("text", "")),
-                })
+        paginated = records[offset:offset + limit]
+
+        knowledge_list = [{
+            "id": r.id,
+            "text": r.payload.get("text", ""),
+            "source_file": r.payload.get("source_file", "Ручной ввод"),
+            "length": len(r.payload.get("text", "")),
+        } for r in paginated if r.payload]
+
         files_stats = {}
         for item in knowledge_list:
             fname = item["source_file"]
@@ -1899,10 +2172,14 @@ async def get_all_knowledge(request: Request):
                 files_stats[fname] = {"name": fname, "chunks": 0, "total_length": 0}
             files_stats[fname]["chunks"] += 1
             files_stats[fname]["total_length"] += item["length"]
+
         return JSONResponse({
             "knowledge": knowledge_list,
-            "total": len(knowledge_list),
+            "total": total_count,
             "files": list(files_stats.values()),
+            "offset": offset,
+            "limit": limit,
+            "has_more": len(records) > offset + limit,
         })
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1936,7 +2213,7 @@ async def delete_file_knowledge(file_name: str, request: Request):
             scroll_filter=models.Filter(
                 must=[models.FieldCondition(key="source_file", match=models.MatchValue(value=file_name))]
             ),
-            limit=500,
+            limit=10000,
             with_payload=False,
         )
         if not records:
@@ -1983,6 +2260,16 @@ async def parse_url_endpoint(request: Request):
     })
 
 
+@app.get("/get_system_prompt")
+async def get_system_prompt(request: Request):
+    """Возвращает текущий SYSTEM_PROMPT (для админки)."""
+    verify_admin(request)
+    return JSONResponse({
+        "prompt": SYSTEM_PROMPT,
+        "length": len(SYSTEM_PROMPT),
+    })
+
+
 @app.post("/update_system_prompt")
 async def update_system_prompt(request: Request):
     token = request.headers.get("x-admin-token")
@@ -1998,15 +2285,16 @@ async def update_system_prompt(request: Request):
         global SYSTEM_PROMPT
         SYSTEM_PROMPT = new_prompt
 
-        with open("system_prompt.txt", "w", encoding="utf-8") as f:
-            f.write(new_prompt)
+        # Сохраняем в Qdrant (переживает рестарт)
+        await save_system_prompt(new_prompt)
 
         return JSONResponse({
             "status": "success",
-            "message": "Системный промпт обновлён",
-            "new_prompt": new_prompt,
+            "message": "Системный промпт обновлён и сохранён в Qdrant",
+            "new_prompt_length": len(new_prompt),
         })
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
