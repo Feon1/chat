@@ -423,11 +423,11 @@
         // ========== ПРОМПТ ==========
         // Внимание: сервер умеет только POST /update_system_prompt (сохранить).
         // Загрузить текущий промпт с сервера нельзя — поэтому держим черновик в localStorage.
+       
         async function loadSystemPrompt() {
-            const saved = localStorage.getItem('system_prompt_draft');
+            const data = await apiCall('/get_system_prompt');
             const textarea = document.getElementById('system-prompt-text');
-            textarea.value = saved || '';
-            textarea.placeholder = 'Введите системный промпт и нажмите «Сохранить»...';
+            textarea.value = (data && data.prompt) || localStorage.getItem('system_prompt_draft') || '';
         }
 
         async function updateSystemPrompt() {
