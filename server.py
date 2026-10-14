@@ -970,9 +970,17 @@ async def search_knowledge_max(query: str) -> str:
     print(f"✅ [FALLBACK-RAG] Найдено {len(points)} чанков "
           f"(score: {points[0].score:.2f}..{points[-1].score:.2f})")
 
-    return "\n\n".join([
+    result = "\n\n".join([
         p.payload.get("text", "") for p in points if p.payload
     ])
+
+# Ограничим суммарный размер контекста, чтобы не раздувать промпт
+    MAX_CONTEXT_CHARS = 8000
+    if len(result) > MAX_CONTEXT_CHARS:
+        result = result[:MAX_CONTEXT_CHARS] + "\n\n[Контекст сокращён]"
+        print(f"✂️ [FALLBACK-RAG] Контекст обрезан до {MAX_CONTEXT_CHARS} символов")
+
+    return result
 
 
 async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500) -> str:
@@ -1015,7 +1023,7 @@ async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: i
     """Вызов Polza (DeepSeek V4 Flash)."""
     print(f"☁️ [POLZA-LLM] Отправка в Polza, model=deepseek-v4-flash")
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
         try:
             polza_json = {
                 "model": "deepseek/deepseek-v4-flash",
@@ -1358,15 +1366,22 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
                 traceback.print_exc()
                 response_text = "Извините, сервис временно недоступен. Попробуйте позже."
 
+       
+        # Если ответ пустой — не отправляем в канал вообще
+        if not response_text or not response_text.strip():
+            print("⚠️ [BG] Пустой ответ — в канал не отправляем")
+            return
+
         if is_channel and post_link:
             final_text = (
                 f"@Feon_ai_bot говорит:\n\n"
                 f"{response_text}\n\n"
                 f"━━━━━━━━━━━━━━━━\n"
-                f"🔗 Пост: {post_link}"
+                f"🔗 Ссылка на пост: {post_link}"
             )
         else:
             final_text = response_text
+        
 
         await send_telegram_message(
             chat_id,
