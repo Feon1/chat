@@ -602,7 +602,7 @@ async def search_knowledge(query: str) -> str:
                 query=query_vector,
                 limit=10,
                 with_payload=True,
-                score_threshold=0.40,
+                score_threshold=0.45,
             )
             search_result = result.points if hasattr(result, "points") else []
         else:
@@ -612,7 +612,7 @@ async def search_knowledge(query: str) -> str:
                 query_vector=query_vector,
                 limit=10,
                 with_payload=True,
-                score_threshold=0.40,
+                score_threshold=0.45,
             )
 
         if not search_result:
@@ -685,9 +685,11 @@ async def save_to_history(user_id: str, role: str, content: str):
         traceback.print_exc()
 
 
-def get_history(user_id: str, limit: int = 50) -> list[dict]:
+async def get_history(user_id: str, limit: int = 50) -> list[dict]:
+    """Асинхронная обёртка над Qdrant scroll — не блокирует event loop."""
     try:
-        records, _ = qdrant.scroll(
+        records, _ = await asyncio.to_thread(
+            qdrant.scroll,
             collection_name=HISTORY_COLLECTION,
             scroll_filter=models.Filter(
                 must=[models.FieldCondition(key="user_id", match=models.MatchValue(value=user_id))]
@@ -718,7 +720,7 @@ async def process_message_core(user_id: str, text: str) -> str:
     print(f"🧠 Запрос от {user_id}: '{text[:50]}...'")
     await save_to_history(user_id, "user", text)
 
-    history = get_history(user_id, limit=3)
+    history = await get_history(user_id, limit=3)
 
     chat_history_str = ""
     for msg in history:
@@ -944,7 +946,7 @@ async def search_knowledge_max(query: str) -> str:
                 query=vec,
                 limit=10,
                 with_payload=True,
-                score_threshold=0.4,
+                score_threshold=0.45,
             )
             points = result.points if hasattr(result, "points") else []
         else:
@@ -954,7 +956,7 @@ async def search_knowledge_max(query: str) -> str:
                 query_vector=vec,
                 limit=10,
                 with_payload=True,
-                score_threshold=0.4,
+                score_threshold=0.45,
             )
     except Exception as e:
         print(f"⚠️ [FALLBACK-RAG] Qdrant упал: {type(e).__name__}: {e}")
@@ -1105,7 +1107,7 @@ async def local_fallback(payload_text: str, user_id: str,
             print("⏭️ [FALLBACK] RAG пуст")
 
     # 4. История
-    history = get_history(user_id, limit=3)
+    history = await get_history(user_id, limit=3)
     chat_history_str = "\n".join([
         f"{'Пользователь' if m.get('role')=='user' else 'Ассистент'}: {m.get('content', '')}"
         for m in history if m.get("content")
@@ -1805,7 +1807,7 @@ async def handle_query(request: Request):
 @app.get("/get_history")
 async def get_history_endpoint(user_id: str):
     try:
-        messages = get_history(user_id, limit=50)
+        messages = await get_history(user_id, limit=50)
         return JSONResponse({"history": messages})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1815,7 +1817,12 @@ async def get_history_endpoint(user_id: str):
 async def get_all_users(request: Request):
     verify_admin(request)
     try:
-        records, _ = qdrant.scroll(collection_name=HISTORY_COLLECTION, limit=300, with_payload=True)
+        records, _ = await asyncio.to_thread(
+            qdrant.scroll,
+            collection_name=HISTORY_COLLECTION,
+            limit=300,
+            with_payload=True,
+        )
         users = {}
         for r in records:
             if r.payload:
@@ -1839,7 +1846,8 @@ async def get_all_users(request: Request):
 async def delete_user(user_id: str, request: Request):
     verify_admin(request)
     try:
-        qdrant.delete(
+        await asyncio.to_thread(
+            qdrant.delete,
             collection_name=HISTORY_COLLECTION,
             points_selector=models.Filter(
                 must=[models.FieldCondition(key="user_id", match=models.MatchValue(value=user_id))]
@@ -1854,7 +1862,12 @@ async def delete_user(user_id: str, request: Request):
 async def get_all_knowledge(request: Request):
     verify_admin(request)
     try:
-        records, _ = qdrant.scroll(collection_name=COLLECTION_NAME, limit=500, with_payload=True)
+        records, _ = await asyncio.to_thread(
+            qdrant.scroll,
+            collection_name=COLLECTION_NAME,
+            limit=500,
+            with_payload=True,
+        )
         knowledge_list = []
         for r in records:
             if r.payload:
@@ -1888,7 +1901,8 @@ async def delete_knowledge(request: Request):
         knowledge_id = body.get("id")
         if not knowledge_id:
             return JSONResponse({"error": "ID не указан"}, status_code=400)
-        qdrant.delete(
+        await asyncio.to_thread(
+            qdrant.delete,
             collection_name=COLLECTION_NAME,
             points_selector=models.PointIdsList(points=[knowledge_id]),
         )
@@ -1901,7 +1915,8 @@ async def delete_knowledge(request: Request):
 async def delete_file_knowledge(file_name: str, request: Request):
     verify_admin(request)
     try:
-        records, _ = qdrant.scroll(
+        records, _ = await asyncio.to_thread(
+            qdrant.scroll,
             collection_name=COLLECTION_NAME,
             scroll_filter=models.Filter(
                 must=[models.FieldCondition(key="source_file", match=models.MatchValue(value=file_name))]
@@ -1912,7 +1927,8 @@ async def delete_file_knowledge(file_name: str, request: Request):
         if not records:
             return JSONResponse({"error": "Файл не найден"}, status_code=404)
         ids_to_delete = [r.id for r in records]
-        qdrant.delete(
+        await asyncio.to_thread(
+            qdrant.delete,
             collection_name=COLLECTION_NAME,
             points_selector=models.PointIdsList(points=ids_to_delete),
         )
