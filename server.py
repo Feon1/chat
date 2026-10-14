@@ -600,7 +600,7 @@ async def search_knowledge(query: str) -> str:
                 qdrant.query_points,
                 collection_name=COLLECTION_NAME,
                 query=query_vector,
-                limit=10,
+                limit=5,
                 with_payload=True,
                 score_threshold=0.45,
             )
@@ -610,7 +610,7 @@ async def search_knowledge(query: str) -> str:
                 qdrant.search,
                 collection_name=COLLECTION_NAME,
                 query_vector=query_vector,
-                limit=10,
+                limit=5,
                 with_payload=True,
                 score_threshold=0.45,
             )
@@ -944,7 +944,7 @@ async def search_knowledge_max(query: str) -> str:
                 qdrant.query_points,
                 collection_name=KNOWLEDGE_MAX_COLLECTION,
                 query=vec,
-                limit=10,
+                limit=5,
                 with_payload=True,
                 score_threshold=0.45,
             )
@@ -954,7 +954,7 @@ async def search_knowledge_max(query: str) -> str:
                 qdrant.search,
                 collection_name=KNOWLEDGE_MAX_COLLECTION,
                 query_vector=vec,
-                limit=10,
+                limit=5,
                 with_payload=True,
                 score_threshold=0.45,
             )
