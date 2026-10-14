@@ -74,15 +74,11 @@ KNOWLEDGE_MAX_COLLECTION = "xiaozhi_knowledge_max"
 POLZA_EMBEDDING_API_KEY = os.getenv("POLZA_EMBEDDING_API_KEY") or POLZA_API_KEY
 POLZA_EMBEDDING_URL = os.getenv("POLZA_EMBEDDING_URL", "https://polza.ai/api/v1/embeddings")
 
-COLLECTION_NAME = "xiaozhi_knowledge_max"      # ← теперь основная = _max
-HISTORY_COLLECTION = "chat_history_max"        # ← история тоже в _max
+COLLECTION_NAME = "xiaozhi_knowledge_max"
+HISTORY_COLLECTION = "chat_history_max"
 
-# Jina больше не используется — оставляем для совместимости
 JINA_API_URL = "https://api.jina.ai/v1/embeddings"
 
-# ===== Локальная модель (через Tailscale) =====
-# Все параметры берутся из переменных окружения Render.
-# В коде секретов быть не должно.
 LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL")
 LOCAL_LLM_API_KEY = os.getenv("LOCAL_LLM_API_KEY")
 LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL")
@@ -91,7 +87,6 @@ if not LOCAL_LLM_BASE_URL or not LOCAL_LLM_API_KEY:
     print("⚠️ Локальная модель не настроена: нет LOCAL_LLM_BASE_URL или LOCAL_LLM_API_KEY")
     print("   Команда /model_local будет недоступна")
 
-# Коллекция для настроек (текущая модель и т.п.)
 SETTINGS_COLLECTION = "app_settings"
 
 BUCKET_NAME = os.getenv("BUCKET_NAME")
@@ -105,9 +100,8 @@ qdrant = QdrantClient(
     api_key=QDRANT_API_KEY,
     timeout=30,
 )
-# Текущая модель: "polza" или "local"
 _current_model = "polza"
-_SETTINGS_MODEL_ID = "11111111-1111-1111-1111-111111111111"  # фиксированный UUID
+_SETTINGS_MODEL_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def get_current_model() -> str:
@@ -167,7 +161,6 @@ if BOTO3_AVAILABLE and all([BUCKET_NAME, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KE
     print("✅ S3 клиент инициализирован")
 else:
     s3_client = None
-
 
 
 # Загружаем промпт только из переменных окружения
@@ -458,8 +451,6 @@ def extract_text_from_rich_message(rich: dict) -> str:
 # ==========================================
 @app.on_event("startup")
 async def startup_event():
-    # 1. Коллекция для базы знаний TG (Jina dim=384)
-  
     # 1. Коллекция для базы знаний (Polza dim=1536)
     try:
         info = qdrant.get_collection(COLLECTION_NAME)
@@ -485,7 +476,7 @@ async def startup_event():
         )
         print(f"✅ Коллекция '{HISTORY_COLLECTION}' создана")
 
-        # 2.5. Коллекция для настроек
+    # 2.5. Коллекция для настроек
     try:
         qdrant.get_collection(SETTINGS_COLLECTION)
         print(f"✅ Коллекция '{SETTINGS_COLLECTION}' найдена")
@@ -495,6 +486,7 @@ async def startup_event():
             vectors_config=models.VectorParams(size=1, distance=models.Distance.COSINE),
         )
         print(f"✅ Коллекция '{SETTINGS_COLLECTION}' создана")
+
     # 3. Индексы для истории
     indices = [
         ("user_id", models.PayloadSchemaType.KEYWORD),
@@ -573,8 +565,10 @@ async def startup_event():
         except Exception as e:
             print(f"⚠️ Не удалось установить меню: {e}")
 
-    # 6. Загружаем сохранённую модель из Qdrant  ← ВОТ СЮДА
+    # 6. Загружаем сохранённую модель из Qdrant
     await load_current_model()
+
+
 # ==========================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ==========================================
@@ -592,7 +586,6 @@ async def get_embedding(text: str) -> list[float]:
         return response.json()["data"][0]["embedding"]
 
 
-
 async def search_knowledge(query: str) -> str:
     """RAG-поиск в xiaozhi_knowledge_max (dim=1536, Polza)."""
     if not POLZA_EMBEDDING_API_KEY:
@@ -602,7 +595,6 @@ async def search_knowledge(query: str) -> str:
     try:
         query_vector = await get_embedding(query)
 
-        # Пробуем новый API
         if hasattr(qdrant, "query_points"):
             result = await asyncio.to_thread(
                 qdrant.query_points,
@@ -735,13 +727,85 @@ async def process_message_core(user_id: str, text: str) -> str:
         chat_history_str += f"{role_name}: {msg.get('content', '')}\n"
 
     context = await search_knowledge(text) if POLZA_EMBEDDING_API_KEY else ""
-    prompt = ""
-    if chat_history_str:
-        prompt += f"История диалога:\n{chat_history_str}\n\n"
-    if context:
-        prompt += f"Контекст:\n{context}\n\n"
 
-    prompt += f"Вопрос: {text}\n\nОтветь кратко, по существу. Максимум 6 предложений."
+    # ---------- Формирование промпта для веб-чата ----------
+    print(f"📄 [CONTEXT] Итоговый контекст (первые 300 символов): "
+          f"{context[:300] if context else 'пусто'}")
+
+    COMMON_TAIL = (
+        "Сначала кратко откликнись на текущее сообщение пользователя (1–2 абзаца, по существу). "
+        "Затем плавно перейди к общим философским и богословским размышлениям на эту тему, "
+        "опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
+        "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
+        "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
+        "Не повторяй формулировки из своих прошлых ответов. "
+        "Ответ должен быть содержательным, но не длиннее 1500 символов."
+    )
+
+    # Проверка: вопрос ли это (по знаку "?" или ключевым словам как отдельных слов)
+    _q_re = re.compile(r"\b(как|почему|что|зачем|когда|где|кто)\b", re.IGNORECASE)
+    is_question = ("?" in text) or bool(_q_re.search(text))
+
+    if not is_question:
+        # Ветка: обычный текст без явного вопроса
+        prompt = (
+            f"[Источник: web]\n\n"
+            f"История:\n{chat_history_str}\n\n"
+            f"Пользователь прислал текст:\n{text}\n\n"
+            f"Дай связный, естественный ответ, как в личной беседе. "
+            f"Не используй нумерацию, заголовки, списки, маркеры. "
+            f"Не перечисляй пункты — излагай мысли плавно, абзацами. "
+            f"Опирайся на философские и богословские идеи из системного промпта, "
+            f"контекста и базы знаний, не цитируй их дословно. "
+            f"Укажи пользователю путь Богу на основе базы знаний. "
+            f"Если пользователь прислал ссылку, проанализируй содержимое страницы "
+            f"(оно есть в контексте) и дай ответ. "
+            f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
+            f"{COMMON_TAIL}"
+        )
+    else:
+        # Ветка: есть вопрос
+        prompt = (
+            f"[Источник: web]\n\n"
+            f"История:\n{chat_history_str}\n\n"
+            f"Вопрос пользователя: {text}\n\n"
+            f"Дай прямой, связный ответ, без нумерации, списков и заголовков. "
+            f"Излагай мысли как в разговоре — плавно и цельно. "
+            f"Используй философские и богословские идеи из системного промпта, "
+            f"базы знаний и контекста для обоснования, но не копируй их структуру. "
+            f"Укажи пользователю путь Богу на основе базы знаний. "
+            f"Если пользователь прислал ссылку, проанализируй содержимое страницы "
+            f"(оно есть в контексте) и дай ответ. "
+            f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
+            f"{COMMON_TAIL}"
+        )
+
+    # Добавление контекста из базы знаний
+    if context:
+        context_intro = (
+            "Ниже приведены философские и богословские фрагменты "
+            "из базы знаний, релевантные запросу:\n\n"
+        )
+        prompt += f"\n\n{context_intro}{context}\n\n"
+        prompt += (
+            "Проанализируй текст пользователя через призму этих фрагментов. "
+            "Используй их для аргументации, сравнения и глубокого осмысления. "
+            "Не просто цитируй — интерпретируй. "
+            "Если пользователь прислал ссылку, проанализируй содержимое страницы "
+            "(оно есть в контексте) и дай ответ. "
+            "Укажи пользователю путь Богу на основе базы знаний. "
+            "Оформи ответ в одном сообщении, без заголовков и разделителей. "
+            "Сначала кратко откликнись на текущее сообщение пользователя (1–2 абзаца, по существу). "
+            "Затем плавно перейди к общим философским и богословским размышлениям на эту тему, "
+            "опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
+            "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
+            "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
+            "Не повторяй формулировки из своих прошлых ответов. "
+            "Ответ должен быть содержательным, но не длиннее 1500 символов."
+        )
+
+    print(f"📝 [PROMPT] Полная длина: {len(prompt)} символов")
+    print(f"📝 [PROMPT] Первые 600 символов:\n{prompt[:600]}...")
 
     async with httpx.AsyncClient(timeout=90.0) as client:
         try:
@@ -912,10 +976,8 @@ async def search_knowledge_max(query: str) -> str:
 async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500) -> str:
     """Вызов локальной модели через Tailscale (OpenAI-совместимый API)."""
     print(f"🖥️ [LOCAL-LLM] Отправка на {LOCAL_LLM_BASE_URL}, model={LOCAL_LLM_MODEL}")
-    t_start = time.time() if 'time' in dir() else 0
 
-   
-        # Tailscale Funnel медленно отвечает на TLS handshake — нужен запас
+    # Tailscale Funnel медленно отвечает на TLS handshake — нужен запас
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(180.0, connect=60.0, write=30.0, pool=30.0),
     ) as client:
@@ -996,7 +1058,6 @@ async def call_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2
     print(f"🎛️ [LLM] Используем модель: {model}")
     if model == "local":
         answer = await call_local_llm(messages, temperature, max_tokens)
-        # Fallback на Polza, если локальная упала
         if not answer or not answer.strip():
             print(f"⚠️ [LLM] Локальная не ответила — фолбэк на Polza")
             answer = await call_polza_llm(messages, temperature, max_tokens)
@@ -1005,7 +1066,9 @@ async def call_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2
         return await call_polza_llm(messages, temperature, max_tokens)
 
 
-async def local_fallback(payload_text: str, user_id: str, platform: str = "Telegram") -> str:
+async def local_fallback(payload_text: str, user_id: str,
+                         platform: str = "Telegram",
+                         is_channel: bool = False) -> str:
     print("🚑 [FALLBACK] Yandex недоступен — генерирую ответ локально")
 
     # 1. Срезаем маркер
@@ -1025,14 +1088,11 @@ async def local_fallback(payload_text: str, user_id: str, platform: str = "Teleg
         return "Извините, я не смог получить вопрос."
 
     # 3. RAG
-   
-        # 3. RAG — для локальной модели берём меньше контекста
     from_current = get_current_model()
     if from_current == "local":
         print("🖥️ [FALLBACK] Локальная модель — RAG урезан до 1-2 чанков")
-        context = await search_knowledge(text)  # она вернёт до 10 чанков
+        context = await search_knowledge(text)
         if context:
-            # Обрезаем до 1500 символов
             context = context[:1500]
             print(f"📄 [FALLBACK] RAG-контекст (сокращён): {len(context)} символов")
         else:
@@ -1051,31 +1111,129 @@ async def local_fallback(payload_text: str, user_id: str, platform: str = "Teleg
         for m in history if m.get("content")
     ])
 
-    # 5. Промпт
+    # 5. Формирование промпта
     current_model = get_current_model()
 
+    # Отладочный вывод контекста
+    print(f"📄 [CONTEXT] Итоговый контекст (первые 300 символов): "
+          f"{context[:300] if context else 'пусто'}")
+
+    # --- Для локальной модели оставляем минимальный промпт (Qwen на телефоне) ---
     if current_model == "local":
-        # Минимальный промпт для Qwen на телефоне
         prompt = f"Вопрос: {text}\n\n"
         if context:
             prompt += f"Контекст (кратко):\n{context[:1200]}\n\n"
         prompt += "Ответь коротко, 3-5 предложений, по существу."
+
+    # --- Для Polza — полноценный промпт с ветвлением ---
     else:
-        prompt = f"[Источник: {platform}]\n\n"
-        if chat_history_str:
-            prompt += f"История:\n{chat_history_str}\n\n"
-        prompt += f"Вопрос пользователя: {text}\n\n"
-        if context:
-            prompt += f"Справочный материал из базы знаний:\n{context}\n\n"
-        prompt += (
-            "Дай прямой, связный ответ по существу. "
-            "Не используй нумерацию, списки и заголовки. "
-            "Опирайся на философские и богословские идеи из контекста и системного промпта. "
-            "Ответ — не длиннее 1500 символов."
+        is_channel_post = bool(is_channel)
+
+        COMMON_TAIL = (
+            "Сначала кратко откликнись на текущее сообщение пользователя "
+            "(1–2 абзаца, по существу). "
+            "Затем плавно перейди к общим философским и богословским размышлениям "
+            "на эту тему, опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
+            "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
+            "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
+            "Не повторяй формулировки из своих прошлых ответов. "
+            "Ответ должен быть содержательным, но не длиннее 1500 символов."
         )
 
-    # 6. Polza
-        # 6. Вызов LLM (Polza или локальная — по текущей настройке)
+        # --- Ветка 1: пост из канала ---
+        if is_channel_post:
+            prompt = (
+                f"[Источник: {platform}]\n\n"
+                f"=== СООБЩЕНИЕ ПОСТА ===\n{text}\n=== КОНЕЦ СООБЩЕНИЯ ===\n\n"
+                f"Твоя задача:\n"
+                f"1) СНАЧАЛА кратко перескажи суть этого поста — 1–2 предложения, "
+                f"по существу, без воды и без оценочных суждений.\n"
+                f"2) ЗАТЕМ дай свой отклик на этот пост — 2–3 абзаца живым языком, "
+                f"опираясь на философские и богословские идеи из системного промпта "
+                f"и базы знаний. "
+                f"Не используй нумерацию, списки, заголовки. "
+                f"Не начинай отклик со слов «Знаешь», «Видишь ли», «Дело в том, что».\n"
+                f"3) Укажи пользователю путь Богу на основе базы знаний — но ненавязчиво, "
+                f"вплетая в текст, а не отдельной строкой.\n\n"
+                f"Формат ответа:\n"
+                f"Кратко о сути вопроса: <1–2 предложения пересказа>\n\n"
+                f"<2–3 абзаца отклика>\n\n"
+                f"Ответ — не длиннее 1500 символов."
+            )
+
+        # --- Ветка 2: обычный текст без явного вопроса ---
+        else:
+            _q_re = re.compile(r"\b(как|почему|что|зачем|когда|где|кто)\b", re.IGNORECASE)
+            is_question = ("?" in text) or bool(_q_re.search(text))
+
+            if not is_question:
+                prompt = (
+                    f"[Источник: {platform}]\n\n"
+                    f"История:\n{chat_history_str}\n\n"
+                    f"Пользователь прислал текст:\n{text}\n\n"
+                    f"Дай связный, естественный ответ, как в личной беседе. "
+                    f"Не используй нумерацию, заголовки, списки, маркеры. "
+                    f"Не перечисляй пункты — излагай мысли плавно, абзацами. "
+                    f"Опирайся на философские и богословские идеи из системного промпта, "
+                    f"контекста и базы знаний, не цитируй их дословно. "
+                    f"Укажи пользователю путь Богу на основе базы знаний. "
+                    f"Если пользователь прислал ссылку, проанализируй содержимое страницы "
+                    f"(оно есть в контексте) и дай ответ. "
+                    f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
+                    f"{COMMON_TAIL}"
+                )
+            else:
+                prompt = (
+                    f"[Источник: {platform}]\n\n"
+                    f"История:\n{chat_history_str}\n\n"
+                    f"Вопрос пользователя: {text}\n\n"
+                    f"Дай прямой, связный ответ, без нумерации, списков и заголовков. "
+                    f"Излагай мысли как в разговоре — плавно и цельно. "
+                    f"Используй философские и богословские идеи из системного промпта, "
+                    f"базы знаний и контекста для обоснования, но не копируй их структуру. "
+                    f"Укажи пользователю путь Богу на основе базы знаний. "
+                    f"Если пользователь прислал ссылку, проанализируй содержимое страницы "
+                    f"(оно есть в контексте) и дай ответ. "
+                    f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
+                    f"{COMMON_TAIL}"
+                )
+
+        # --- Добавление контекста из базы знаний ---
+        if context:
+            if is_channel_post:
+                # Для постов из канала — просто подмешиваем справочный материал
+                prompt += (
+                    f"\n\nСправочный материал из базы знаний "
+                    f"(используй по необходимости):\n{context}"
+                )
+            else:
+                context_intro = (
+                    "Ниже приведены философские и богословские фрагменты "
+                    "из базы знаний, релевантные запросу:\n\n"
+                )
+                prompt += f"\n\n{context_intro}{context}\n\n"
+                prompt += (
+                    "Проанализируй текст пользователя через призму этих фрагментов. "
+                    "Используй их для аргументации, сравнения и глубокого осмысления. "
+                    "Не просто цитируй — интерпретируй. "
+                    "Если пользователь прислал ссылку, проанализируй содержимое страницы "
+                    "(оно есть в контексте) и дай ответ. "
+                    "Укажи пользователю путь Богу на основе базы знаний. "
+                    "Оформи ответ в одном сообщении, без заголовков и разделителей. "
+                    "Сначала кратко откликнись на текущее сообщение пользователя "
+                    "(1–2 абзаца, по существу). "
+                    "Затем плавно перейди к общим философским и богословским размышлениям "
+                    "на эту тему, опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
+                    "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
+                    "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
+                    "Не повторяй формулировки из своих прошлых ответов. "
+                    "Ответ должен быть содержательным, но не длиннее 1500 символов."
+                )
+
+    print(f"📝 [PROMPT] Полная длина: {len(prompt)} символов")
+    print(f"📝 [PROMPT] Первые 600 символов:\n{prompt[:600]}...")
+
+    # 6. Вызов LLM (Polza или локальная — по текущей настройке)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": prompt},
@@ -1189,7 +1347,9 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
             print("🚑 [BG] Yandex недоступен — переключаюсь на локальный fallback")
             try:
                 response_text = await local_fallback(
-                    payload_text, user_id, platform="Telegram"
+                    payload_text, user_id,
+                    platform="Telegram",
+                    is_channel=is_channel,
                 )
             except Exception as e:
                 print(f"❌ [BG] Fallback тоже упал: {e}")
