@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Феон | Админ-панель</title>
+    <style>
+        :root {
+            --bg: #121212;
+            --card: #1e1e1e;
+            --text: #e0e0e0;
+            --accent: #4caf50;
+            --danger: #f44336;
+            --border: #333;
+            --radius: 8px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+        body { background: var(--bg); color: var(--text); display: flex; flex-direction: column; min-height: 100vh; padding: 1rem; }
+        header { background: var(--card); padding: 1rem; border-radius: var(--radius); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+        .stats { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .stat-card { background: var(--bg); padding: 0.5rem 1rem; border-radius: var(--radius); text-align: center; }
+        .stat-val { font-size: 1.3rem; font-weight: bold; color: var(--accent); }
+        .stat-lbl { font-size: 0.7rem; color: #888; }
+        nav { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1rem; overflow-x: auto; }
+        nav button { background: none; border: none; color: #888; cursor: pointer; padding: 0.5rem 1rem; font-size: 1rem; border-bottom: 2px solid transparent; white-space: nowrap; }
+        nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+        .tab { display: none; }
+        .tab.active { display: block; }
+        .chat-layout { display: grid; grid-template-columns: 280px 1fr; gap: 1rem; height: calc(100vh - 250px); min-height: 400px; }
+        @media (max-width: 768px) { .chat-layout { grid-template-columns: 1fr; height: auto; } .user-list { max-height: 200px; } }
+        .user-list, .msg-area { background: var(--card); border-radius: var(--radius); padding: 0.5rem; overflow-y: auto; }
+        .user-item { padding: 0.7rem; margin-bottom: 0.3rem; border-radius: 6px; cursor: pointer; border-left: 3px solid transparent; display: flex; justify-content: space-between; align-items: center; }
+        .user-item:hover { background: rgba(255,255,255,0.05); }
+        .user-item.active { background: rgba(76, 175, 80, 0.1); border-left-color: var(--accent); }
+        .msg { max-width: 80%; padding: 0.7rem; border-radius: var(--radius); line-height: 1.4; word-wrap: break-word; margin-bottom: 0.5rem; }
+        .msg.user { align-self: flex-end; background: var(--accent); color: #000; margin-left: auto; }
+        .msg.bot { align-self: flex-start; background: rgba(255,255,255,0.08); }
+        .msg-time { font-size: 0.65rem; opacity: 0.6; margin-top: 0.2rem; text-align: right; }
+        .kb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
+        .kb-card { background: var(--card); padding: 1rem; border-radius: var(--radius); border: 1px solid var(--border); }
+        .kb-text { font-size: 0.9rem; color: #bbb; max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
+        .controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+        input, textarea { background: var(--bg); border: 1px solid var(--border); color: white; padding: 0.5rem; border-radius: 4px; flex: 1; min-width: 150px; }
+        button.btn { padding: 0.5rem 1.2rem; border: none; border-radius: 4px; cursor: pointer; color: white; background: var(--accent); font-size: 0.95rem; }
+        .btn-danger { background: var(--danger); }
+        .btn-sm { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: var(--card); padding: 2rem; border-radius: var(--radius); width: 90%; max-width: 400px; }
+        .loading { color: #888; padding: 1rem; text-align: center; }
+        .delete-user-btn { margin-left: 0.5rem; }
+        .prompt-area { margin-bottom: 1rem; }
+        .prompt-area textarea { width: 100%; min-height: 80px; }
+        .refresh-btn { background: transparent; border: 1px solid var(--border); color: var(--text); cursor: pointer; padding: 0.3rem 0.7rem; border-radius: 4px; }
+        .refresh-btn:hover { background: var(--card); }
+        .flex-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+        .header-right { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+        .file-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+        .file-name { font-weight: bold; }
+        .file-chunks { color: #888; font-size: 0.8rem; }
+        .upload-status { margin-left: 1rem; color: var(--accent); }
+    </style>
+</head>
+<body>
+
+    <!-- Login Modal -->
+    <div id="login-modal" class="modal" style="display: flex;">
+        <div class="modal-content">
+            <h2>🔐 Вход в админку</h2>
+            <input type="password" id="token-input" placeholder="Введите ADMIN_TOKEN" style="width:100%; margin:1rem 0; padding:0.7rem;">
+            <button class="btn" onclick="login()" style="width:100%;">Войти</button>
+        </div>
+    </div>
+
+    <!-- Main Interface -->
+    <div id="app" style="display:none;">
+        <header>
+            <h3>🔒 Админ-панель</h3>
+            <div class="header-right">
+                <div class="stats">
+                    <div class="stat-card"><div class="stat-val" id="s-users">0</div><div class="stat-lbl">Пользователи</div></div>
+                    <div class="stat-card"><div class="stat-val" id="s-msgs">0</div><div class="stat-lbl">Сообщений</div></div>
+                    <div class="stat-card"><div class="stat-val" id="s-kb">0</div><div class="stat-lbl">Знаний</div></div>
+                </div>
+                <button class="btn btn-danger" onclick="logout()">Выйти</button>
+            </div>
+        </header>
+
+        <nav>
+            <button class="active" onclick="switchTab('history')">💬 История</button>
+            <button onclick="switchTab('knowledge')">📚 База знаний</button>
+            <button onclick="switchTab('files')">📁 Файлы</button>
+            <button onclick="switchTab('prompt')">⚙️ Промпт</button>
+        </nav>
+
+        <main>
+            <!-- Tab: История -->
+            <div id="tab-history" class="tab active">
+                <div class="flex-row" style="justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span style="color: #888;">Список пользователей</span>
+                    <button class="refresh-btn" onclick="loadUsers(); loadStats();">🔄 Обновить</button>
+                </div>
+                <div class="chat-layout">
+                    <div class="user-list" id="user-list"><div class="loading">Загрузка...</div></div>
+                    <div class="msg-area" id="msg-area"><div class="loading">Выберите пользователя</div></div>
+                </div>
+            </div>
+
+            <!-- Tab: База знаний -->
+            <div id="tab-knowledge" class="tab">
+                <div class="controls">
+                    <textarea id="new-kb-text" placeholder="Введите новое знание..." rows="2" style="flex:1;"></textarea>
+                    <button class="btn" onclick="addKnowledge()">➕ Добавить</button>
+                    <button class="btn" onclick="loadKnowledge(); loadStats();" style="background: #555;">🔄</button>
+                </div>
+                <div class="kb-grid" id="kb-grid"><div class="loading">Загрузка...</div></div>
+            </div>
+
+            <!-- Tab: Файлы (прямая загрузка в S3) -->
+            <div id="tab-files" class="tab">
+                <div class="controls" style="margin-bottom:1rem;">
+                    <input type="file" id="file-input" accept=".pdf,.docx" style="flex:1; padding:0.3rem;">
+                    <button class="btn" onclick="uploadFile()">📤 Загрузить</button>
+                    <span id="upload-status" class="upload-status"></span>
+                </div>
+                <div id="file-list"><div class="loading">Загрузка...</div></div>
+            </div>
+
+            <!-- Tab: Системный промпт -->
+            <div id="tab-prompt" class="tab">
+                <div class="prompt-area">
+                    <textarea id="system-prompt-text" placeholder="Системный промпт..." rows="6" style="width:100%;"></textarea>
+                    <button class="btn" onclick="updateSystemPrompt()" style="margin-top:0.5rem;">💾 Сохранить промпт</button>
+                    <span id="prompt-status" style="margin-left: 1rem; color: var(--accent);"></span>
+                </div>
+                <div style="color: #888; font-size: 0.9rem; margin-top: 1rem;">
+                    <p>Текущий промпт загружается при входе. Вы можете изменить его и сохранить.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // ⚠️ Замените на актуальный URL вашего API Gateway (без слеша на конце)
+        const API_BASE = "https://d5dq57ou1bsu78horuke.avjje9e3.apigw.yandexcloud.net"; 
+        
+        let token = localStorage.getItem('admin_token');
+        if (token) {
+            document.getElementById('login-modal').style.display = 'none';
+            document.getElementById('app').style.display = 'block';
+            init();
+        }
+
+        function getHeaders() {
+            return {
+                'x-admin-token': token,
+                'Content-Type': 'application/json'
+            };
+        }
+
+        async function apiCall(endpoint, options = {}) {
+            try {
+                const res = await fetch(`${API_BASE}${endpoint}`, {
+                    headers: getHeaders(),
+                    ...options
+                });
+                if (res.status === 401) { logout(); return null; }
+                return await res.json();
+            } catch (e) {
+                console.error('API Error:', e);
+                alert('Ошибка соединения. Проверьте API_BASE и CORS.');
+                return null;
+            }
+        }
+
+        function login() {
+            const val = document.getElementById('token-input').value.trim();
+            if (val) {
+                token = val;
+                localStorage.setItem('admin_token', token);
+                document.getElementById('login-modal').style.display = 'none';
+                document.getElementById('app').style.display = 'block';
+                init();
+            } else {
+                alert('Введите токен');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('admin_token');
+            location.reload();
+        }
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            event.target.classList.add('active');
+            if (tabName === 'history') {
+                loadUsers();
+                loadStats();
+            }
+            if (tabName === 'knowledge') loadKnowledge();
+            if (tabName === 'files') loadFiles();
+            if (tabName === 'prompt') loadSystemPrompt();
+        }
+
+        async function init() {
+            loadStats();
+            loadUsers();
+            loadFiles();
+            loadSystemPrompt();
+        }
+
+        async function loadStats() {
+            const u = await apiCall('/get_all_users');
+            const k = await apiCall('/get_all_knowledge');
+            if (u) {
+                document.getElementById('s-users').textContent = u.total || 0;
+                const totalMsgs = (u.users || []).reduce((sum, us) => sum + (us.message_count || 0), 0);
+                document.getElementById('s-msgs').textContent = totalMsgs;
+            }
+            if (k) document.getElementById('s-kb').textContent = k.total || 0;
+        }
+
+        async function loadUsers() {
+            const data = await apiCall('/get_all_users');
+            const list = document.getElementById('user-list');
+            if (!data || !data.users || data.users.length === 0) {
+                list.innerHTML = '<div class="loading">Нет пользователей</div>';
+                return;
+            }
+            list.innerHTML = data.users.map(u => `
+                <div class="user-item" data-user="${u.user_id}">
+                    <div>
+                        <div style="font-weight:bold;">${u.user_id}</div>
+                        <div style="font-size:0.8rem; color:#888;">${u.message_count} сообщ.</div>
+                    </div>
+                    <button class="btn btn-danger btn-sm delete-user-btn" onclick="event.stopPropagation(); deleteUser('${u.user_id}')">🗑</button>
+                </div>
+            `).join('');
+
+            document.querySelectorAll('.user-item').forEach(el => {
+                el.addEventListener('click', function(e) {
+                    if (e.target.closest('.delete-user-btn')) return;
+                    const uid = this.dataset.user;
+                    document.querySelectorAll('.user-item').forEach(it => it.classList.remove('active'));
+                    this.classList.add('active');
+                    loadHistory(uid);
+                });
+            });
+        }
+
+        async function deleteUser(userId) {
+            if (!confirm(`Удалить пользователя ${userId}?`)) return;
+            const res = await apiCall(`/delete_user?user_id=${encodeURIComponent(userId)}`, { method: 'DELETE' });
+            if (res && res.status === 'success') {
+                alert('Пользователь удалён');
+                loadUsers();
+                loadStats();
+                document.getElementById('msg-area').innerHTML = '<div class="loading">Выберите пользователя</div>';
+            } else {
+                alert('Ошибка удаления');
+            }
+        }
+
+        async function loadHistory(uid) {
+            const area = document.getElementById('msg-area');
+            area.innerHTML = '<div class="loading">Загрузка...</div>';
+            const data = await apiCall(`/get_history?user_id=${encodeURIComponent(uid)}`);
+            if (!data || !data.history || data.history.length === 0) {
+                area.innerHTML = '<div class="loading">История пуста</div>';
+                return;
+            }
+            area.innerHTML = data.history.map(m => `
+                <div class="msg ${m.role}">
+                    <div>${m.content.replace(/\n/g, '<br>')}</div>
+                    <div class="msg-time">${m.timestamp ? new Date(m.timestamp).toLocaleString() : ''}</div>
+                </div>
+            `).join('');
+            area.scrollTop = area.scrollHeight;
+        }
+
+        async function loadKnowledge() {
+            const data = await apiCall('/get_all_knowledge');
+            const grid = document.getElementById('kb-grid');
+            if (!data || !data.knowledge || data.knowledge.length === 0) {
+                grid.innerHTML = '<div class="loading">Нет знаний</div>';
+                return;
+            }
+            grid.innerHTML = data.knowledge.map(k => `
+                <div class="kb-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="color:#888; font-size:0.8rem;">${k.source_file || 'Ручной ввод'}</span>
+                        <button class="btn btn-danger btn-sm" onclick="deleteKnowledge('${k.id}')">🗑</button>
+                    </div>
+                    <div class="kb-text">${k.text}</div>
+                </div>
+            `).join('');
+        }
+
+        async function addKnowledge() {
+            const text = document.getElementById('new-kb-text').value.trim();
+            if (text.length < 10) {
+                alert('Минимум 10 символов');
+                return;
+            }
+            const res = await apiCall('/add_knowledge', { method: 'POST', body: JSON.stringify({ text }) });
+            if (res && res.status === 'success') {
+                document.getElementById('new-kb-text').value = '';
+                loadKnowledge();
+                loadStats();
+            } else {
+                alert('Ошибка добавления');
+            }
+        }
+
+        async function deleteKnowledge(id) {
+         if (!confirm('Удалить знание?')) return;
+         try {
+            const res = await fetch(`${API_BASE}/delete_knowledge`, {
+              method: 'DELETE',
+              headers: {
+                'x-admin-token': token,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({ id: id })  // id может быть числом или строкой
+            });
+            const data = await res.json();
+            if (res.ok && data.status === 'success') {
+              loadKnowledge();
+              loadStats();
+            } else {
+              alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+            }
+         } catch (e) {
+           console.error('Ошибка удаления:', e);
+           alert('Ошибка сети');
+         }
+        }
+		
+		
+
+        // ========== ФАЙЛЫ (прямая загрузка в S3) ==========
+        async function loadFiles() {
+            const data = await apiCall('/get_all_knowledge');
+            const list = document.getElementById('file-list');
+            if (!data || !data.knowledge || data.knowledge.length === 0) {
+                list.innerHTML = '<div class="loading">Нет загруженных файлов</div>';
+                return;
+            }
+            const filesMap = {};
+            data.knowledge.forEach(k => {
+                const name = k.source_file || 'Ручной ввод';
+                if (!filesMap[name]) filesMap[name] = { name, chunks: 0 };
+                filesMap[name].chunks += 1;
+            });
+            const files = Object.values(filesMap);
+            list.innerHTML = files.map(f => `
+                <div class="file-item">
+                    <div>
+                        <div class="file-name">${f.name}</div>
+                        <div class="file-chunks">${f.chunks} фрагментов</div>
+                    </div>
+                    <button class="btn btn-danger btn-sm" onclick="deleteFile('${f.name}')">🗑</button>
+                </div>
+            `).join('');
+        }
+
+        async function uploadFile() {
+            const input = document.getElementById('file-input');
+            const file = input.files[0];
+            if (!file) {
+                alert('Выберите файл');
+                return;
+            }
+            const statusEl = document.getElementById('upload-status');
+            statusEl.textContent = '⏳ Получение ссылки...';
+            statusEl.style.color = 'var(--accent)';
+
+            try {
+                // 1. Получить presigned URL
+                const urlRes = await apiCall('/get_upload_url', {
+                    method: 'POST',
+                    body: JSON.stringify({ filename: file.name })
+                });
+                if (!urlRes || !urlRes.url) {
+                    throw new Error('Не удалось получить ссылку');
+                }
+
+                // 2. Загрузить файл напрямую в Object Storage
+                statusEl.textContent = '⏳ Загрузка в хранилище...';
+                const formData = new FormData();
+                Object.keys(urlRes.fields).forEach(key => {
+                    formData.append(key, urlRes.fields[key]);
+                });
+                formData.append('file', file);
+
+                const uploadResp = await fetch(urlRes.url, {
+                    method: 'POST',
+                    body: formData
+                });
+                if (!uploadResp.ok) {
+                    const text = await uploadResp.text();
+                    throw new Error(`Ошибка загрузки: ${uploadResp.status} ${text}`);
+                }
+
+                // 3. Уведомить бэкенд об обработке
+                statusEl.textContent = '⏳ Обработка файла...';
+                const processRes = await apiCall('/upload_file_async', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        object_key: urlRes.object_key,
+                        filename: file.name
+                    })
+                });
+
+                if (processRes && processRes.status === 'success') {
+                    statusEl.textContent = '✅ ' + processRes.message;
+                    input.value = '';
+                    loadFiles();
+                    loadStats();
+                } else {
+                    throw new Error(processRes?.error || 'Ошибка обработки');
+                }
+
+            } catch (e) {
+                statusEl.textContent = '❌ ' + e.message;
+                statusEl.style.color = 'var(--danger)';
+                console.error(e);
+            }
+        }
+
+        async function deleteFile(name) {
+            if (!confirm(`Удалить ВСЕ фрагменты из файла "${name}"?`)) return;
+            const res = await apiCall(`/delete_file_knowledge?file_name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+            if (res && res.status === 'success') {
+                alert(res.message);
+                loadFiles();
+                loadStats();
+            } else {
+                alert('Ошибка удаления');
+            }
+        }
+
+        // ========== ПРОМПТ ==========
+        async function loadSystemPrompt() {
+            const saved = localStorage.getItem('system_prompt_draft');
+            const textarea = document.getElementById('system-prompt-text');
+            textarea.value = saved || 'Введите новый системный промпт...';
+        }
+
+        async function updateSystemPrompt() {
+            const newPrompt = document.getElementById('system-prompt-text').value.trim();
+            if (!newPrompt) {
+                alert('Промпт не может быть пустым');
+                return;
+            }
+            const res = await apiCall('/update_system_prompt', { 
+                method: 'POST', 
+                body: JSON.stringify({ prompt: newPrompt }) 
+            });
+            if (res && res.status === 'success') {
+                document.getElementById('prompt-status').textContent = '✅ Сохранено!';
+                localStorage.setItem('system_prompt_draft', newPrompt);
+                setTimeout(() => document.getElementById('prompt-status').textContent = '', 3000);
+            } else {
+                alert('Ошибка сохранения');
+            }
+        }
+
+        // Автообновление статистики
+        setInterval(() => { if (token) loadStats(); }, 30000);
+    </script>
+</body>
+</html>
