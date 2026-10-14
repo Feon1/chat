@@ -602,7 +602,7 @@ async def search_knowledge(query: str) -> str:
                 query=query_vector,
                 limit=10,
                 with_payload=True,
-                score_threshold=0.30,
+                score_threshold=0.40,
             )
             search_result = result.points if hasattr(result, "points") else []
         else:
@@ -612,7 +612,7 @@ async def search_knowledge(query: str) -> str:
                 query_vector=query_vector,
                 limit=10,
                 with_payload=True,
-                score_threshold=0.30,
+                score_threshold=0.40,
             )
 
         if not search_result:
@@ -944,7 +944,7 @@ async def search_knowledge_max(query: str) -> str:
                 query=vec,
                 limit=10,
                 with_payload=True,
-                score_threshold=0.25,
+                score_threshold=0.4,
             )
             points = result.points if hasattr(result, "points") else []
         else:
@@ -954,7 +954,7 @@ async def search_knowledge_max(query: str) -> str:
                 query_vector=vec,
                 limit=10,
                 with_payload=True,
-                score_threshold=0.25,
+                score_threshold=0.4,
             )
     except Exception as e:
         print(f"⚠️ [FALLBACK-RAG] Qdrant упал: {type(e).__name__}: {e}")
