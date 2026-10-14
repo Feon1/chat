@@ -3,307 +3,186 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Админ-панель Феон (Telegram + Web)</title>
+    <title>Феон | Админ-панель</title>
     <style>
         :root {
-            --bg-color: #121212;
-            --card-bg: #1e1e1e;
-            --text-primary: #e0e0e0;
-            --text-secondary: #a0a0a0;
+            --bg: #121212;
+            --card: #1e1e1e;
+            --text: #e0e0e0;
             --accent: #4caf50;
             --danger: #f44336;
             --border: #333;
+            --radius: 8px;
         }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-        
-        body { background-color: var(--bg-color); color: var(--text-primary); min-height: 100vh; display: flex; flex-direction: column; }
-
-        header { 
-            background: var(--card-bg); padding: 1rem 2rem; border-bottom: 1px solid var(--border); 
-            display: flex; justify-content: space-between; align-items: center; 
-        }
-        
-        .stats { display: flex; gap: 1rem; }
-        .stat-card { background: var(--bg-color); padding: 0.5rem 1rem; border-radius: 8px; text-align: center; min-width: 100px; }
-        .stat-value { font-size: 1.5rem; font-weight: bold; color: var(--accent); }
-        .stat-label { font-size: 0.8rem; color: var(--text-secondary); }
-
-        nav { display: flex; gap: 1rem; padding: 1rem 2rem; border-bottom: 1px solid var(--border); }
-        nav button { 
-            background: none; border: none; color: var(--text-secondary); cursor: pointer; 
-            padding: 0.5rem 1rem; font-size: 1rem; border-bottom: 2px solid transparent; transition: all 0.3s;
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+        body { background: var(--bg); color: var(--text); display: flex; flex-direction: column; min-height: 100vh; padding: 1rem; }
+        header { background: var(--card); padding: 1rem; border-radius: var(--radius); border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+        .stats { display: flex; gap: 1rem; flex-wrap: wrap; }
+        .stat-card { background: var(--bg); padding: 0.5rem 1rem; border-radius: var(--radius); text-align: center; }
+        .stat-val { font-size: 1.3rem; font-weight: bold; color: var(--accent); }
+        .stat-lbl { font-size: 0.7rem; color: #888; }
+        nav { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; margin-bottom: 1rem; overflow-x: auto; }
+        nav button { background: none; border: none; color: #888; cursor: pointer; padding: 0.5rem 1rem; font-size: 1rem; border-bottom: 2px solid transparent; white-space: nowrap; }
         nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
-
-        main { flex: 1; padding: 2rem; max-width: 1400px; margin: 0 auto; width: 100%; }
-        
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-
-        /* Chat History Styles */
-        .chat-container { display: grid; grid-template-columns: 300px 1fr; gap: 2rem; height: calc(100vh - 200px); }
-        .user-list { background: var(--card-bg); border-radius: 12px; overflow-y: auto; padding: 1rem; }
-        .user-item { 
-            padding: 1rem; margin-bottom: 0.5rem; border-radius: 8px; cursor: pointer; 
-            transition: background 0.2s; border-left: 3px solid transparent;
-        }
+        .tab { display: none; }
+        .tab.active { display: block; }
+        .chat-layout { display: grid; grid-template-columns: 280px 1fr; gap: 1rem; height: calc(100vh - 250px); min-height: 400px; }
+        @media (max-width: 768px) { .chat-layout { grid-template-columns: 1fr; height: auto; } .user-list { max-height: 200px; } }
+        .user-list, .msg-area { background: var(--card); border-radius: var(--radius); padding: 0.5rem; overflow-y: auto; }
+        .user-item { padding: 0.7rem; margin-bottom: 0.3rem; border-radius: 6px; cursor: pointer; border-left: 3px solid transparent; display: flex; justify-content: space-between; align-items: center; }
         .user-item:hover { background: rgba(255,255,255,0.05); }
         .user-item.active { background: rgba(76, 175, 80, 0.1); border-left-color: var(--accent); }
-        .user-name { font-weight: bold; margin-bottom: 0.25rem; }
-        .user-meta { font-size: 0.8rem; color: var(--text-secondary); }
-
-        .messages-area { background: var(--card-bg); border-radius: 12px; padding: 1.5rem; overflow-y: auto; display: flex; flex-direction: column; gap: 1rem; }
-        .message { max-width: 80%; padding: 1rem; border-radius: 12px; line-height: 1.5; position: relative; }
-        .message.user { align-self: flex-end; background: var(--accent); color: #000; border-bottom-right-radius: 2px; }
-        .message.bot { align-self: flex-start; background: rgba(255,255,255,0.1); border-bottom-left-radius: 2px; }
-        .msg-time { font-size: 0.7rem; opacity: 0.7; margin-top: 0.5rem; text-align: right; }
-
-        /* Knowledge Base Styles */
-        .kb-controls { display: flex; gap: 1rem; margin-bottom: 2rem; flex-wrap: wrap; }
-        .kb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1.5rem; }
-        .kb-card { background: var(--card-bg); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--border); }
-        .kb-text { font-size: 0.9rem; color: var(--text-secondary); margin: 1rem 0; max-height: 150px; overflow: hidden; text-overflow: ellipsis; white-space: pre-wrap; }
-        
-        /* Buttons & Inputs */
-        button.btn { 
-            padding: 0.6rem 1.2rem; border: none; border-radius: 6px; cursor: pointer; 
-            font-weight: 500; transition: opacity 0.2s; 
-        }
-        button.btn:hover { opacity: 0.9; }
-        button.btn-danger { background: var(--danger); color: white; }
-        button.btn-primary { background: var(--accent); color: white; }
-        
-        input, textarea { 
-            background: var(--bg-color); border: 1px solid var(--border); color: var(--text-primary); 
-            padding: 0.8rem; border-radius: 6px; width: 100%; font-size: 1rem;
-        }
-        textarea { resize: vertical; min-height: 100px; }
-
-        .loading { text-align: center; padding: 2rem; color: var(--text-secondary); }
-        .empty-state { text-align: center; padding: 3rem; color: var(--text-secondary); }
-
-        @media (max-width: 768px) {
-            .chat-container { grid-template-columns: 1fr; }
-            .user-list { max-height: 200px; }
-            .stats { flex-wrap: wrap; }
-        }
+        .msg { max-width: 80%; padding: 0.7rem; border-radius: var(--radius); line-height: 1.4; word-wrap: break-word; margin-bottom: 0.5rem; }
+        .msg.user { align-self: flex-end; background: var(--accent); color: #000; margin-left: auto; }
+        .msg.bot { align-self: flex-start; background: rgba(255,255,255,0.08); }
+        .msg-time { font-size: 0.65rem; opacity: 0.6; margin-top: 0.2rem; text-align: right; }
+        .kb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
+        .kb-card { background: var(--card); padding: 1rem; border-radius: var(--radius); border: 1px solid var(--border); }
+        .kb-text { font-size: 0.9rem; color: #bbb; max-height: 100px; overflow-y: auto; white-space: pre-wrap; }
+        .controls { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+        input, textarea { background: var(--bg); border: 1px solid var(--border); color: white; padding: 0.5rem; border-radius: 4px; flex: 1; min-width: 150px; }
+        button.btn { padding: 0.5rem 1.2rem; border: none; border-radius: 4px; cursor: pointer; color: white; background: var(--accent); font-size: 0.95rem; }
+        .btn-danger { background: var(--danger); }
+        .btn-sm { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-content { background: var(--card); padding: 2rem; border-radius: var(--radius); width: 90%; max-width: 400px; }
+        .loading { color: #888; padding: 1rem; text-align: center; }
+        .delete-user-btn { margin-left: 0.5rem; }
+        .prompt-area { margin-bottom: 1rem; }
+        .prompt-area textarea { width: 100%; min-height: 80px; }
+        .refresh-btn { background: transparent; border: 1px solid var(--border); color: var(--text); cursor: pointer; padding: 0.3rem 0.7rem; border-radius: 4px; }
+        .refresh-btn:hover { background: var(--card); }
+        .flex-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+        .header-right { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; }
+        .file-item { display: flex; justify-content: space-between; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid var(--border); }
+        .file-name { font-weight: bold; }
+        .file-chunks { color: #888; font-size: 0.8rem; }
+        .upload-status { margin-left: 1rem; color: var(--accent); }
     </style>
 </head>
 <body>
-    <header>
-        <h2>🔒 Админ-панель Феон (TG + Web)</h2>
-        <div class="stats">
-            <div class="stat-card"><div class="stat-value" id="stat-users">0</div><div class="stat-label">Пользователей</div></div>
-            <div class="stat-card"><div class="stat-value" id="stat-messages">0</div><div class="stat-label">Сообщений</div></div>
-            <div class="stat-card"><div class="stat-value" id="stat-knowledge">0</div><div class="stat-label">Фрагментов знаний</div></div>
+
+    <!-- Login Modal -->
+    <div id="login-modal" class="modal" style="display: flex;">
+        <div class="modal-content">
+            <h2>🔐 Вход в админку</h2>
+            <input type="password" id="token-input" placeholder="Введите ADMIN_TOKEN" style="width:100%; margin:1rem 0; padding:0.7rem;">
+            <button class="btn" onclick="login()" style="width:100%;">Войти</button>
         </div>
-        <button class="btn btn-danger" onclick="logout()">Выйти</button>
-    </header>
+    </div>
 
-    <nav>
-        <button class="active" onclick="switchTab('history')">💬 История чатов</button>
-        <button onclick="switchTab('knowledge')">📚 База знаний</button>
-    </nav>
-
-    <main>
-        <!-- Tab: Chat History -->
-        <div id="tab-history" class="tab-content active">
-            <div class="chat-container">
-                <div class="user-list" id="user-list">
-                    <div class="loading">Загрузка пользователей...</div>
+    <!-- Main Interface -->
+    <div id="app" style="display:none;">
+        <header>
+            <h3>🔒 Админ-панель</h3>
+            <div class="header-right">
+                <div class="stats">
+                    <div class="stat-card"><div class="stat-val" id="s-users">0</div><div class="stat-lbl">Пользователи</div></div>
+                    <div class="stat-card"><div class="stat-val" id="s-msgs">0</div><div class="stat-lbl">Сообщений</div></div>
+                    <div class="stat-card"><div class="stat-val" id="s-kb">0</div><div class="stat-lbl">Знаний</div></div>
                 </div>
-                <div class="messages-area" id="messages-area">
-                    <div class="empty-state">Выберите пользователя для просмотра истории</div>
+                <button class="btn btn-danger" onclick="logout()">Выйти</button>
+            </div>
+        </header>
+
+        <nav>
+            <button class="active" onclick="switchTab('history')">💬 История</button>
+            <button onclick="switchTab('knowledge')">📚 База знаний</button>
+            <button onclick="switchTab('files')">📁 Файлы</button>
+            <button onclick="switchTab('prompt')">⚙️ Промпт</button>
+        </nav>
+
+        <main>
+            <!-- Tab: История -->
+            <div id="tab-history" class="tab active">
+                <div class="flex-row" style="justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span style="color: #888;">Список пользователей</span>
+                    <button class="refresh-btn" onclick="loadUsers(); loadStats();">🔄 Обновить</button>
+                </div>
+                <div class="chat-layout">
+                    <div class="user-list" id="user-list"><div class="loading">Загрузка...</div></div>
+                    <div class="msg-area" id="msg-area"><div class="loading">Выберите пользователя</div></div>
                 </div>
             </div>
-        </div>
 
-        <!-- Tab: Knowledge Base -->
-        <div id="tab-knowledge" class="tab-content">
-            <div class="kb-controls">
-                <input type="text" id="new-knowledge-text" placeholder="Добавить новое знание (мин. 10 символов)...">
-                <button class="btn btn-primary" onclick="addKnowledge()">➕ Добавить</button>
-                <input type="file" id="file-upload" accept=".pdf,.docx" style="display:none" onchange="uploadFile(this)">
-                <button class="btn btn-primary" onclick="document.getElementById('file-upload').click()">📁 Загрузить файл</button>
+            <!-- Tab: База знаний -->
+            <div id="tab-knowledge" class="tab">
+                <div class="controls">
+                    <textarea id="new-kb-text" placeholder="Введите новое знание..." rows="2" style="flex:1;"></textarea>
+                    <button class="btn" onclick="addKnowledge()">➕ Добавить</button>
+                    <button class="btn" onclick="loadKnowledge(); loadStats();" style="background: #555;">🔄</button>
+                </div>
+                <div class="kb-grid" id="kb-grid"><div class="loading">Загрузка...</div></div>
             </div>
-            <div class="kb-grid" id="knowledge-grid">
-                <div class="loading">Загрузка базы знаний...</div>
+
+            <!-- Tab: Файлы (загрузка на Render) -->
+            <div id="tab-files" class="tab">
+                <div class="controls" style="margin-bottom:1rem;">
+                    <input type="file" id="file-input" accept=".pdf,.docx" style="flex:1; padding:0.3rem;">
+                    <button class="btn" onclick="uploadFile()">📤 Загрузить</button>
+                    <span id="upload-status" class="upload-status"></span>
+                </div>
+                <div id="file-list"><div class="loading">Загрузка...</div></div>
             </div>
-        </div>
-    </main>
+
+            <!-- Tab: Системный промпт -->
+            <div id="tab-prompt" class="tab">
+                <div class="prompt-area">
+                    <textarea id="system-prompt-text" placeholder="Системный промпт..." rows="6" style="width:100%;"></textarea>
+                    <button class="btn" onclick="updateSystemPrompt()" style="margin-top:0.5rem;">💾 Сохранить промпт</button>
+                    <span id="prompt-status" style="margin-left: 1rem; color: var(--accent);"></span>
+                </div>
+                <div style="color: #888; font-size: 0.9rem; margin-top: 1rem;">
+                    <p>Введите новый системный промпт и сохраните. Он применится сразу после обновления (без перезапуска).</p>
+                </div>
+            </div>
+        </main>
+    </div>
 
     <script>
-        // ⚠️ ЗАМЕНИТЕ НА ВАШ РЕАЛЬНЫЙ URL RENDER ПРИЛОЖЕНИЯ
-        const API_BASE = "https://docker-new-chat.onrender.com"; 
-// ⚠️ Замените docker-new-chat.onrender.com на ваш реальный URL Render
-        
-        let adminToken = localStorage.getItem('admin_token');
-        if (!adminToken) {
-            adminToken = prompt('Введите ADMIN_TOKEN:');
-            if (adminToken) localStorage.setItem('admin_token', adminToken);
+        // ⚠️ URL вашего бэкенда на Render (без слеша на конце)
+        const API_BASE = "https://docker-new-chat.onrender.com";
+
+        let token = localStorage.getItem('admin_token');
+        if (token) {
+            document.getElementById('login-modal').style.display = 'none';
+            document.getElementById('app').style.display = 'block';
+            init();
         }
 
-        const headers = { 'x-admin-token': adminToken };
+        function getHeaders() {
+            return {
+                'x-admin-token': token,
+                'Content-Type': 'application/json'
+            };
+        }
 
         async function apiCall(endpoint, options = {}) {
             try {
-                const res = await fetch(`${API_BASE}${endpoint}`, { 
-                    headers: { ...headers, 'Content-Type': 'application/json' }, 
-                    ...options 
+                const res = await fetch(`${API_BASE}${endpoint}`, {
+                    headers: getHeaders(),
+                    ...options
                 });
-                if (res.status === 401) {
-                    localStorage.removeItem('admin_token');
-                    alert('Неверный токен!');
-                    location.reload();
-                    return null;
-                }
+                if (res.status === 401) { logout(); return null; }
                 return await res.json();
             } catch (e) {
                 console.error('API Error:', e);
+                alert('Ошибка соединения. Проверьте API_BASE и CORS.');
                 return null;
             }
         }
 
-        function switchTab(tab) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
-            document.getElementById(`tab-${tab}`).classList.add('active');
-            event.target.classList.add('active');
-            
-            if (tab === 'history') loadUsers();
-            if (tab === 'knowledge') loadKnowledge();
-        }
-
-        async function loadStats() {
-            const usersData = await apiCall('/get_all_users');
-            const kbData = await apiCall('/get_all_knowledge');
-            
-            if (usersData) {
-                document.getElementById('stat-users').textContent = usersData.total || 0;
-                document.getElementById('stat-messages').textContent = usersData.users?.reduce((sum, u) => sum + u.message_count, 0) || 0;
-            }
-            if (kbData) document.getElementById('stat-knowledge').textContent = kbData.total || 0;
-        }
-
-        async function loadUsers() {
-            const data = await apiCall('/get_all_users');
-            const list = document.getElementById('user-list');
-            
-            if (!data || !data.users.length) {
-                list.innerHTML = '<div class="empty-state">Нет пользователей</div>';
-                return;
-            }
-
-            list.innerHTML = data.users.map(u => `
-                <div class="user-item" onclick="loadHistory('${u.user_id}', this)">
-                    <div class="user-name">${u.user_id}</div>
-                    <div class="user-meta">${u.message_count} сообщ. • ${new Date(u.last_activity).toLocaleString('ru-RU')}</div>
-                </div>
-            `).join('');
-        }
-
-        async function loadHistory(userId, element) {
-            document.querySelectorAll('.user-item').forEach(el => el.classList.remove('active'));
-            if (element) element.classList.add('active');
-
-            const area = document.getElementById('messages-area');
-            area.innerHTML = '<div class="loading">Загрузка истории...</div>';
-
-            const data = await apiCall(`/get_history?user_id=${userId}`);
-            if (!data || !data.history.length) {
-                area.innerHTML = '<div class="empty-state">История пуста</div>';
-                return;
-            }
-
-            area.innerHTML = data.history.map(m => `
-                <div class="message ${m.role}">
-                    ${m.content.replace(/\n/g, '<br>')}
-                    <div class="msg-time">${new Date(m.timestamp).toLocaleString('ru-RU')}</div>
-                </div>
-            `).join('');
-            
-            area.scrollTop = area.scrollHeight;
-        }
-
-        async function deleteUser(userId) {
-            if (!confirm(`Удалить пользователя ${userId}?`)) return;
-            await apiCall(`/delete_user?user_id=${userId}`, { method: 'DELETE' });
-            loadUsers();
-            loadStats();
-        }
-
-        async function addKnowledge() {
-            const input = document.getElementById('new-knowledge-text');
-            const text = input.value.trim();
-            if (text.length < 10) return alert('Минимум 10 символов');
-
-            const res = await apiCall('/add_knowledge', { 
-                method: 'POST', 
-                body: JSON.stringify({ text }) 
-            });
-            
-            if (res?.status === 'success') {
-                input.value = '';
-                loadKnowledge();
-                loadStats();
+        function login() {
+            const val = document.getElementById('token-input').value.trim();
+            if (val) {
+                token = val;
+                localStorage.setItem('admin_token', token);
+                document.getElementById('login-modal').style.display = 'none';
+                document.getElementById('app').style.display = 'block';
+                init();
             } else {
-                alert(res?.error || 'Ошибка добавления');
+                alert('Введите токен');
             }
-        }
-
-        async function uploadFile(input) {
-            const file = input.files[0];
-            if (!file) return;
-
-            const formData = new FormData();
-            formData.append('file', file);
-
-            const res = await fetch(`${API_BASE}/upload_document`, {
-                method: 'POST',
-                headers: { 'x-admin-token': adminToken },
-                body: formData
-            });
-
-            const data = await res.json();
-            if (data.status === 'success') {
-                alert(data.message);
-                loadKnowledge();
-                loadStats();
-            } else {
-                alert(data.error || 'Ошибка загрузки');
-            }
-            input.value = '';
-        }
-
-        async function loadKnowledge() {
-            const data = await apiCall('/get_all_knowledge');
-            const grid = document.getElementById('knowledge-grid');
-            
-            if (!data || !data.knowledge.length) {
-                grid.innerHTML = '<div class="empty-state">База знаний пуста</div>';
-                return;
-            }
-
-            grid.innerHTML = data.knowledge.map(k => `
-                <div class="kb-card">
-                    <strong>${k.source_file}</strong>
-                    <div class="kb-text">${k.text}</div>
-                    <small>Длина: ${k.length} симв. | ID: ${k.id.toString().slice(0,8)}...</small>
-                    <br><br>
-                    <button class="btn btn-danger" onclick="deleteKnowledge('${k.id}')">🗑️ Удалить</button>
-                </div>
-            `).join('');
-        }
-
-        async function deleteKnowledge(id) {
-            if (!confirm('Удалить этот фрагмент знания?')) return;
-            await apiCall('/delete_knowledge', { 
-                method: 'DELETE', 
-                body: JSON.stringify({ id }) 
-            });
-            loadKnowledge();
-            loadStats();
         }
 
         function logout() {
@@ -311,9 +190,267 @@
             location.reload();
         }
 
-        // Init
-        loadStats();
-        loadUsers();
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            event.target.classList.add('active');
+            if (tabName === 'history') {
+                loadUsers();
+                loadStats();
+            }
+            if (tabName === 'knowledge') loadKnowledge();
+            if (tabName === 'files') loadFiles();
+            if (tabName === 'prompt') loadSystemPrompt();
+        }
+
+        async function init() {
+            loadStats();
+            loadUsers();
+            loadFiles();
+            loadSystemPrompt();
+        }
+
+        async function loadStats() {
+            const u = await apiCall('/get_all_users');
+            const k = await apiCall('/get_all_knowledge');
+            if (u) {
+                document.getElementById('s-users').textContent = u.total || 0;
+                const totalMsgs = (u.users || []).reduce((sum, us) => sum + (us.message_count || 0), 0);
+                document.getElementById('s-msgs').textContent = totalMsgs;
+            }
+            if (k) document.getElementById('s-kb').textContent = k.total || 0;
+        }
+
+        async function loadUsers() {
+            const data = await apiCall('/get_all_users');
+            const list = document.getElementById('user-list');
+            if (!data || !data.users || data.users.length === 0) {
+                list.innerHTML = '<div class="loading">Нет пользователей</div>';
+                return;
+            }
+            list.innerHTML = data.users.map(u => `
+                <div class="user-item" data-user="${u.user_id}">
+                    <div>
+                        <div style="font-weight:bold;">${u.user_id}</div>
+                        <div style="font-size:0.8rem; color:#888;">${u.message_count} сообщ.</div>
+                    </div>
+                    <button class="btn btn-danger btn-sm delete-user-btn" onclick="event.stopPropagation(); deleteUser('${u.user_id}')">🗑</button>
+                </div>
+            `).join('');
+
+            document.querySelectorAll('.user-item').forEach(el => {
+                el.addEventListener('click', function(e) {
+                    if (e.target.closest('.delete-user-btn')) return;
+                    const uid = this.dataset.user;
+                    document.querySelectorAll('.user-item').forEach(it => it.classList.remove('active'));
+                    this.classList.add('active');
+                    loadHistory(uid);
+                });
+            });
+        }
+
+        async function deleteUser(userId) {
+            if (!confirm(`Удалить пользователя ${userId}?`)) return;
+            const res = await apiCall(`/delete_user?user_id=${encodeURIComponent(userId)}`, { method: 'DELETE' });
+            if (res && res.status === 'success') {
+                alert('Пользователь удалён');
+                loadUsers();
+                loadStats();
+                document.getElementById('msg-area').innerHTML = '<div class="loading">Выберите пользователя</div>';
+            } else {
+                alert('Ошибка удаления');
+            }
+        }
+
+        async function loadHistory(uid) {
+            const area = document.getElementById('msg-area');
+            area.innerHTML = '<div class="loading">Загрузка...</div>';
+            const data = await apiCall(`/get_history?user_id=${encodeURIComponent(uid)}`);
+            if (!data || !data.history || data.history.length === 0) {
+                area.innerHTML = '<div class="loading">История пуста</div>';
+                return;
+            }
+            area.innerHTML = data.history.map(m => `
+                <div class="msg ${m.role}">
+                    <div>${m.content.replace(/\n/g, '<br>')}</div>
+                    <div class="msg-time">${m.timestamp ? new Date(m.timestamp).toLocaleString() : ''}</div>
+                </div>
+            `).join('');
+            area.scrollTop = area.scrollHeight;
+        }
+
+        async function loadKnowledge() {
+            const data = await apiCall('/get_all_knowledge');
+            const grid = document.getElementById('kb-grid');
+            if (!data || !data.knowledge || data.knowledge.length === 0) {
+                grid.innerHTML = '<div class="loading">Нет знаний</div>';
+                return;
+            }
+            grid.innerHTML = data.knowledge.map(k => `
+                <div class="kb-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="color:#888; font-size:0.8rem;">${k.source_file || 'Ручной ввод'}</span>
+                        <button class="btn btn-danger btn-sm" onclick="deleteKnowledge('${k.id}')">🗑</button>
+                    </div>
+                    <div class="kb-text">${k.text}</div>
+                </div>
+            `).join('');
+        }
+
+        async function addKnowledge() {
+            const text = document.getElementById('new-kb-text').value.trim();
+            if (text.length < 10) {
+                alert('Минимум 10 символов');
+                return;
+            }
+            const res = await apiCall('/add_knowledge', { method: 'POST', body: JSON.stringify({ text }) });
+            if (res && res.status === 'success') {
+                document.getElementById('new-kb-text').value = '';
+                loadKnowledge();
+                loadStats();
+            } else {
+                alert('Ошибка добавления');
+            }
+        }
+
+        async function deleteKnowledge(id) {
+            if (!confirm('Удалить знание?')) return;
+            try {
+                const res = await fetch(`${API_BASE}/delete_knowledge`, {
+                    method: 'DELETE',
+                    headers: {
+                        'x-admin-token': token,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ id: id })
+                });
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    loadKnowledge();
+                    loadStats();
+                } else {
+                    alert('Ошибка: ' + (data.error || 'Неизвестная ошибка'));
+                }
+            } catch (e) {
+                console.error('Ошибка удаления:', e);
+                alert('Ошибка сети');
+            }
+        }
+
+        // ========== ФАЙЛЫ (загрузка на Render через /upload_document) ==========
+        async function loadFiles() {
+            const data = await apiCall('/get_all_knowledge');
+            const list = document.getElementById('file-list');
+            if (!data || !data.knowledge || data.knowledge.length === 0) {
+                list.innerHTML = '<div class="loading">Нет загруженных файлов</div>';
+                return;
+            }
+            const filesMap = {};
+            data.knowledge.forEach(k => {
+                const name = k.source_file || 'Ручной ввод';
+                if (!filesMap[name]) filesMap[name] = { name, chunks: 0 };
+                filesMap[name].chunks += 1;
+            });
+            const files = Object.values(filesMap);
+            list.innerHTML = files.map(f => `
+                <div class="file-item">
+                    <div>
+                        <div class="file-name">${f.name}</div>
+                        <div class="file-chunks">${f.chunks} фрагментов</div>
+                    </div>
+                    <button class="btn btn-danger btn-sm" onclick="deleteFile('${f.name}')">🗑</button>
+                </div>
+            `).join('');
+        }
+
+        async function uploadFile() {
+            const input = document.getElementById('file-input');
+            const file = input.files[0];
+            if (!file) {
+                alert('Выберите файл');
+                return;
+            }
+            const statusEl = document.getElementById('upload-status');
+            statusEl.textContent = '⏳ Загрузка и обработка...';
+            statusEl.style.color = 'var(--accent)';
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                // Отправляем напрямую на Render — multipart/form-data
+                const resp = await fetch(`${API_BASE}/upload_document`, {
+                    method: 'POST',
+                    headers: {
+                        // Content-Type НЕ указываем — браузер сам поставит multipart boundary
+                        'x-admin-token': token
+                    },
+                    body: formData
+                });
+
+                const data = await resp.json().catch(() => ({}));
+
+                if (resp.ok && data.status === 'success') {
+                    statusEl.textContent = '✅ ' + (data.message || 'Готово');
+                    statusEl.style.color = 'var(--accent)';
+                    input.value = '';
+                    loadFiles();
+                    loadStats();
+                } else {
+                    throw new Error(data.error || `HTTP ${resp.status}`);
+                }
+
+            } catch (e) {
+                statusEl.textContent = '❌ ' + e.message;
+                statusEl.style.color = 'var(--danger)';
+                console.error(e);
+            }
+        }
+
+        async function deleteFile(name) {
+            if (!confirm(`Удалить ВСЕ фрагменты из файла "${name}"?`)) return;
+            const res = await apiCall(`/delete_file_knowledge?file_name=${encodeURIComponent(name)}`, { method: 'DELETE' });
+            if (res && res.status === 'success') {
+                alert(res.message);
+                loadFiles();
+                loadStats();
+            } else {
+                alert('Ошибка удаления');
+            }
+        }
+
+        // ========== ПРОМПТ ==========
+        // Внимание: сервер умеет только POST /update_system_prompt (сохранить).
+        // Загрузить текущий промпт с сервера нельзя — поэтому держим черновик в localStorage.
+        async function loadSystemPrompt() {
+            const saved = localStorage.getItem('system_prompt_draft');
+            const textarea = document.getElementById('system-prompt-text');
+            textarea.value = saved || '';
+            textarea.placeholder = 'Введите системный промпт и нажмите «Сохранить»...';
+        }
+
+        async function updateSystemPrompt() {
+            const newPrompt = document.getElementById('system-prompt-text').value.trim();
+            if (!newPrompt) {
+                alert('Промпт не может быть пустым');
+                return;
+            }
+            const res = await apiCall('/update_system_prompt', {
+                method: 'POST',
+                body: JSON.stringify({ prompt: newPrompt })
+            });
+            if (res && res.status === 'success') {
+                document.getElementById('prompt-status').textContent = '✅ Сохранено!';
+                localStorage.setItem('system_prompt_draft', newPrompt);
+                setTimeout(() => document.getElementById('prompt-status').textContent = '', 3000);
+            } else {
+                alert('Ошибка сохранения');
+            }
+        }
+
+        // Автообновление статистики
+        setInterval(() => { if (token) loadStats(); }, 30000);
     </script>
 </body>
 </html>
