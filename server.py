@@ -1017,7 +1017,7 @@ async def process_message_core(user_id: str, text: str) -> str:
     if not is_question:
         prompt = (
             f"[Источник: web]\n\n"
-            f"История:\n{chat_history_str}\n\n"
+            #f"История:\n{chat_history_str}\n\n"
             f"Пользователь прислал текст:\n{text}\n\n"
             f"Дай связный, естественный ответ, как в личной беседе. "
             f"Не используй нумерацию, заголовки, списки, маркеры. "
@@ -1033,7 +1033,7 @@ async def process_message_core(user_id: str, text: str) -> str:
     else:
         prompt = (
             f"[Источник: web]\n\n"
-            f"История:\n{chat_history_str}\n\n"
+            #f"История:\n{chat_history_str}\n\n"
             f"Вопрос пользователя: {text}\n\n"
             f"Дай прямой, связный ответ, без нумерации, списков и заголовков. "
             f"Излагай мысли как в разговоре — плавно и цельно. "
@@ -1363,7 +1363,7 @@ async def local_fallback(payload_text: str, user_id: str,
             if not is_question:
                 prompt = (
                     f"[Источник: {platform}]\n\n"
-                    f"История:\n{chat_history_str}\n\n"
+                   # f"История:\n{chat_history_str}\n\n"
                     f"Пользователь прислал текст:\n{text}\n\n"
                     f"Дай связный, естественный ответ, как в личной беседе. "
                     f"Не используй нумерацию, заголовки, списки, маркеры. "
@@ -1426,10 +1426,23 @@ async def local_fallback(payload_text: str, user_id: str,
     print(f"📝 [PROMPT] Первые 600 символов:\n{prompt[:600]}...")
 
     # 6. Вызов LLM (Polza или локальная)
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": prompt},
-    ]
+    
+    # Правильная структура: system + история отдельными turns + текущий запрос
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
+# История как отдельные пары user/assistant
+    for msg in history[-3:]:          # последние 3 хода (6 сообщений)
+        role = msg.get("role", "user")
+        if role not in ("user", "assistant"):
+            continue
+        content = (msg.get("content") or "").strip()
+        if not content:
+            continue
+        messages.append({"role": role, "content": content})
+
+# Текущий запрос — БЕЗ встроенной истории (она уже в messages выше)
+    messages.append({"role": "user", "content": prompt})
+
     answer = await call_llm(messages, temperature=0.7, max_tokens=2000)
 
     # === 3 уровня fallback ===
