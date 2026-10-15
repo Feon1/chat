@@ -156,7 +156,6 @@ async def save_current_model(model: str):
 # ==========================================
 _DEFAULT_SYSTEM_PROMPT = "Ты — Феон, верующий ИИ."
 
-# Начальное значение — из env (или дефолт). Может быть перезаписано из Qdrant при старте.
 SYSTEM_PROMPT = os.getenv("SYSTEM_PROMPT") or _DEFAULT_SYSTEM_PROMPT
 if SYSTEM_PROMPT.strip():
     print(f"✅ SYSTEM_PROMPT из env ({len(SYSTEM_PROMPT)} симв.) — будет проверен Qdrant при старте")
@@ -178,7 +177,6 @@ async def load_system_prompt():
                 SYSTEM_PROMPT = val
                 print(f"✅ SYSTEM_PROMPT из Qdrant ({len(SYSTEM_PROMPT)} симв.)")
                 return
-        # В Qdrant пусто — сохраняем то, что пришло из env
         if SYSTEM_PROMPT and SYSTEM_PROMPT.strip():
             await save_system_prompt(SYSTEM_PROMPT, silent=True)
             print(f"✅ SYSTEM_PROMPT из env сохранён в Qdrant ({len(SYSTEM_PROMPT)} симв.)")
@@ -227,12 +225,10 @@ _ssl_context = ssl.create_default_context(cafile=certifi.where())
 RENDER_LINK_MARKER = "[RENDER_LINK]"
 
 # === Приоритетный поиск ===
-# Эти ключевые слова дают буст: сначала keyword-фильтр, потом ранжирование.
 PRIORITY_KEYWORDS = [
     "голем", "обитель", "левиафан",
     "феон", "обители", "голема", "левиафана",
 ]
-# Чанки из этих источников идут в начало контекста.
 PRIORITY_SOURCES = [
     "Обитель+Голем.pdf",
     "realisti-ru.pdf",
@@ -565,7 +561,7 @@ async def startup_event():
         except Exception:
             print(f"ℹ️ Индекс '{field_name}' уже есть")
 
-    # 3.5. Индекс на text в коллекции знаний (для приоритетного keyword-поиска)
+    # 3.5. Индекс на text в коллекции знаний
     try:
         qdrant.create_payload_index(
             collection_name=COLLECTION_NAME,
@@ -688,23 +684,29 @@ async def get_embedding(text: str) -> list[float]:
     raise last_error
 
 
+# Предкомпилированный regex для отсева тестовых запросов (по границам слов)
+_JUNK_RE = re.compile(
+    r"\b(тест|проверка|привет|ты\s+тут|test|hello|hi|ок|ok)\b",
+    re.IGNORECASE,
+)
+
+
 def _is_junk_query(query: str) -> bool:
     """Отсев коротких/тестовых запросов."""
     q_stripped = query.strip()
     if len(q_stripped) < 6:
         print(f"⏭️ [SEARCH] Запрос короткий ({len(q_stripped)} симв.) — БЗ не ищем")
         return True
-    junk_words = ["тест", "проверка", "привет", "ты тут", "test", "hello", "hi", "ок", "ok"]
-    q_lower = q_stripped.lower()
-    if any(jw in q_lower for jw in junk_words) and len(query) < 40:
+
+    # Ищем слова ЦЕЛИКОМ, а не подстроки
+    if len(query) < 40 and _JUNK_RE.search(query):
         print(f"⏭️ [SEARCH] Похоже на тест — БЗ не ищем")
         return True
     return False
 
 
 async def search_priority(query: str) -> str:
-    """Приоритетный keyword-поиск: если в запросе есть ключевое слово,
-    ищем только среди чанков с этим словом и ранжируем эмбеддингом."""
+    """Приоритетный keyword-поиск."""
     q_lower = query.lower()
     for kw in PRIORITY_KEYWORDS:
         if kw not in q_lower:
@@ -787,7 +789,7 @@ async def search_priority(query: str) -> str:
 
 
 async def search_knowledge(query: str) -> str:
-    """RAG-поиск в xiaozhi_knowledge_max (dim=1536, Polza) — для веб-чата и локальной модели."""
+    """RAG-поиск в xiaozhi_knowledge_max — для веб-чата и локальной модели."""
     if _is_junk_query(query):
         return ""
 
@@ -805,7 +807,7 @@ async def search_knowledge(query: str) -> str:
                 query=query_vector,
                 limit=5,
                 with_payload=True,
-                score_threshold=0.45,
+                score_threshold=0.50,
             )
             search_result = result.points if hasattr(result, "points") else []
         else:
@@ -815,7 +817,7 @@ async def search_knowledge(query: str) -> str:
                 query_vector=query_vector,
                 limit=5,
                 with_payload=True,
-                score_threshold=0.45,
+                score_threshold=0.50,
             )
 
         if not search_result:
@@ -863,7 +865,7 @@ async def search_knowledge_max(query: str) -> str:
                 query=vec,
                 limit=5,
                 with_payload=True,
-                score_threshold=0.45,
+                score_threshold=0.50,
             )
             points = result.points if hasattr(result, "points") else []
         else:
@@ -873,7 +875,7 @@ async def search_knowledge_max(query: str) -> str:
                 query_vector=vec,
                 limit=5,
                 with_payload=True,
-                score_threshold=0.45,
+                score_threshold=0.50,
             )
     except Exception as e:
         print(f"⚠️ [FALLBACK-RAG] Qdrant упал: {type(e).__name__}: {e}")
@@ -988,13 +990,7 @@ async def process_message_core(user_id: str, text: str) -> str:
     print(f"🧠 Запрос от {user_id}: '{text[:50]}...'")
     await save_to_history(user_id, "user", text)
 
-    history = await get_history(user_id, limit=3)
-
-    chat_history_str = ""
-    for msg in history:
-        role = msg.get('role', 'unknown')
-        role_name = "Пользователь" if role == 'user' else "Ассистент"
-        chat_history_str += f"{role_name}: {msg.get('content', '')}\n"
+    history = await get_history(user_id, limit=7)  # последние 7 сообщений (с запасом)
 
     context = await search_knowledge(text) if POLZA_EMBEDDING_API_KEY else ""
 
@@ -1017,7 +1013,6 @@ async def process_message_core(user_id: str, text: str) -> str:
     if not is_question:
         prompt = (
             f"[Источник: web]\n\n"
-            #f"История:\n{chat_history_str}\n\n"
             f"Пользователь прислал текст:\n{text}\n\n"
             f"Дай связный, естественный ответ, как в личной беседе. "
             f"Не используй нумерацию, заголовки, списки, маркеры. "
@@ -1033,7 +1028,6 @@ async def process_message_core(user_id: str, text: str) -> str:
     else:
         prompt = (
             f"[Источник: web]\n\n"
-            #f"История:\n{chat_history_str}\n\n"
             f"Вопрос пользователя: {text}\n\n"
             f"Дай прямой, связный ответ, без нумерации, списков и заголовков. "
             f"Излагай мысли как в разговоре — плавно и цельно. "
@@ -1070,14 +1064,22 @@ async def process_message_core(user_id: str, text: str) -> str:
         )
 
     print(f"📝 [PROMPT] Полная длина: {len(prompt)} символов")
-    print(f"📝 [PROMPT] Первые 600 символов:\n{prompt[:600]}...")
 
-    async with httpx.AsyncClient(timeout=90.0) as client:
+    # === История как отдельные turns (правильная структура) ===
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for msg in history[:-1]:  # исключаем только что сохранённый user-запрос
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = (msg.get("content") or "").strip()
+        if content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": prompt})
+
+    print(f"📨 [MSG] Всего turns в messages: {len(messages)}")
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
         try:
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ]
             response = await client.post(
                 "https://api.polza.ai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"},
@@ -1087,6 +1089,8 @@ async def process_message_core(user_id: str, text: str) -> str:
                     "temperature": 0.7,
                     "max_tokens": 2500,
                     "thinking": {"type": "disabled"},
+                    "frequency_penalty": 0.6,
+                    "presence_penalty": 0.5,
                 },
             )
             response.raise_for_status()
@@ -1305,14 +1309,12 @@ async def local_fallback(payload_text: str, user_id: str,
         else:
             print("⏭️ [FALLBACK] RAG пуст")
 
-    # 4. История
-    history = await get_history(user_id, limit=3)
-    chat_history_str = "\n".join([
-        f"{'Пользователь' if m.get('role')=='user' else 'Ассистент'}: {m.get('content', '')}"
-        for m in history if m.get("content")
-    ])
+    # 4. История — берём последние 7 сообщений (для правильной структуры messages)
+    history_full = await get_history(user_id, limit=7)
+    # Исключаем последнее (только что сохранённое) — его отправим как prompt
+    history_for_messages = history_full[:-1] if history_full else []
 
-    # 5. Формирование промпта
+    # 5. Формирование промпта (без истории внутри текста)
     current_model = get_current_model()
 
     print(f"📄 [CONTEXT] Итоговый контекст (первые 300 символов): "
@@ -1363,7 +1365,6 @@ async def local_fallback(payload_text: str, user_id: str,
             if not is_question:
                 prompt = (
                     f"[Источник: {platform}]\n\n"
-                   # f"История:\n{chat_history_str}\n\n"
                     f"Пользователь прислал текст:\n{text}\n\n"
                     f"Дай связный, естественный ответ, как в личной беседе. "
                     f"Не используй нумерацию, заголовки, списки, маркеры. "
@@ -1379,7 +1380,6 @@ async def local_fallback(payload_text: str, user_id: str,
             else:
                 prompt = (
                     f"[Источник: {platform}]\n\n"
-                    f"История:\n{chat_history_str}\n\n"
                     f"Вопрос пользователя: {text}\n\n"
                     f"Дай прямой, связный ответ, без нумерации, списков и заголовков. "
                     f"Излагай мысли как в разговоре — плавно и цельно. "
@@ -1423,41 +1423,31 @@ async def local_fallback(payload_text: str, user_id: str,
                 )
 
     print(f"📝 [PROMPT] Полная длина: {len(prompt)} символов")
-    print(f"📝 [PROMPT] Первые 600 символов:\n{prompt[:600]}...")
 
-    # 6. Вызов LLM (Polza или локальная)
-    
-    # Правильная структура: system + история отдельными turns + текущий запрос
+    # 6. Собираем messages правильно: system + history (ролями) + текущий user
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-
-# История как отдельные пары user/assistant
-    for msg in history[-3:]:          # последние 3 хода (6 сообщений)
-        role = msg.get("role", "user")
+    for msg in history_for_messages:
+        role = msg.get("role")
         if role not in ("user", "assistant"):
             continue
         content = (msg.get("content") or "").strip()
-        if not content:
-            continue
-        messages.append({"role": role, "content": content})
-
-# Текущий запрос — БЕЗ встроенной истории (она уже в messages выше)
+        if content:
+            messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
 
+    print(f"📨 [MSG] Всего turns в messages: {len(messages)}")
+
+    # 7. Вызов LLM
     answer = await call_llm(messages, temperature=0.7, max_tokens=2000)
 
     # === 3 уровня fallback ===
 
-    # Попытка 2: обрезаем промпт
     if not answer or not answer.strip():
         print("🔁 [LLM] Пусто — пробуем с сокращённым промптом")
         short_prompt = prompt[:6000]
-        msgs2 = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": short_prompt},
-        ]
+        msgs2 = list(messages[:-1]) + [{"role": "user", "content": short_prompt}]
         answer = await call_llm(msgs2, temperature=0.7, max_tokens=1500)
 
-    # Попытка 3: без БЗ, только текст
     if not answer or not answer.strip():
         print("🔁 [LLM] Пусто — пробуем без БЗ")
         min_prompt = (
@@ -1473,7 +1463,6 @@ async def local_fallback(payload_text: str, user_id: str,
 
     print(f"✅ [FALLBACK] Ответ получен: {len(answer) if answer else 0} символов")
 
-    # 7. Сохраняем в историю (только непустое)
     if answer and answer.strip():
         try:
             await save_to_history(user_id, "bot", answer)
@@ -1565,11 +1554,9 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
         print(f"📤 [BG] Payload для Yandex: {len(payload_text)} симв. "
               f"Начало: {payload_text[:120]!r}")
 
-        # 5. Отправляем в Yandex
         response_text = await call_yandex_function(payload_text, user_id)
         print(f"🧵 [BG] Ответ Yandex: {response_text[:120]}...")
 
-        # 🚑 FALLBACK
         is_yandex_failed = (
             not response_text
             or response_text.startswith("❌")
@@ -1589,7 +1576,6 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
                 traceback.print_exc()
                 response_text = ""
 
-        # ⛔ Не отправляем пустой ответ
         if not response_text or not response_text.strip():
             print("⚠️ [BG] Пустой ответ — в чат не отправляем")
             return
@@ -2093,7 +2079,6 @@ async def delete_user(user_id: str, request: Request):
 
 @app.post("/debug_find")
 async def debug_find(request: Request):
-    """Ищет чанки, содержащие заданный текст. Помогает понять, сохранены ли знания."""
     verify_admin(request)
     try:
         body = await request.json()
@@ -2101,7 +2086,6 @@ async def debug_find(request: Request):
         if not needle:
             return JSONResponse({"error": "text required"}, status_code=400)
 
-        # Общее количество
         try:
             cnt = await asyncio.to_thread(qdrant.count, collection_name=COLLECTION_NAME, exact=True)
             total = cnt.count
@@ -2298,7 +2282,6 @@ async def update_system_prompt(request: Request):
         global SYSTEM_PROMPT
         SYSTEM_PROMPT = new_prompt
 
-        # Сохраняем в Qdrant (переживает рестарт)
         await save_system_prompt(new_prompt)
 
         return JSONResponse({
