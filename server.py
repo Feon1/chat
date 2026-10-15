@@ -704,7 +704,80 @@ def _is_junk_query(query: str) -> bool:
         return True
     return False
 
+async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list[list[float]]:
+    """Батч-эмбеддинги через Polza: N текстов за один HTTP-запрос.
+    Возвращает список векторов в том же порядке, что и входные texts.
+    Пустые тексты пропускаются (для них — None на соответствующей позиции)."""
+    if not POLZA_EMBEDDING_API_KEY:
+        raise ValueError("POLZA_EMBEDDING_API_KEY не задан")
 
+    if not texts:
+        return []
+
+    total = len(texts)
+    print(f"📦 [EMBED-BATCH] Всего текстов: {total}, размер батча: {batch_size}")
+
+    headers = {
+        "Authorization": f"Bearer {POLZA_EMBEDDING_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    results: list[list[float] | None] = [None] * total
+
+    async def _send_batch(indices: list[int]):
+        payload_texts = [texts[i] for i in indices]
+        data = {"model": "text-embedding-3-small", "input": payload_texts}
+
+        last_err = None
+        for attempt in range(1, 4):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(60.0, connect=10.0)
+                ) as client:
+                    resp = await client.post(
+                        POLZA_EMBEDDING_URL, headers=headers, json=data
+                    )
+                    resp.raise_for_status()
+                    body = resp.json()
+                    # OpenAI-совместимый формат: data = [{"embedding": [...], "index": i}, ...]
+                    items = body.get("data") or []
+                    if len(items) != len(indices):
+                        print(f"⚠️ [EMBED-BATCH] Ожидали {len(indices)}, получили {len(items)}")
+                    for item in items:
+                        local_idx = item.get("index", 0)
+                        if 0 <= local_idx < len(indices):
+                            results[indices[local_idx]] = item["embedding"]
+                    return
+            except Exception as e:
+                last_err = e
+                print(f"⚠️ [EMBED-BATCH] попытка {attempt}/3: {type(e).__name__}: {e}")
+                if attempt < 3:
+                    await asyncio.sleep(1.5 * attempt)
+        print(f"❌ [EMBED-BATCH] батч провалился: {last_err}")
+
+    # Разбиваем на батчи
+    batches = [
+        list(range(i, min(i + batch_size, total)))
+        for i in range(0, total, batch_size)
+    ]
+
+    # Параллельно запускаем все батчи (ограничиваем конкурентность, чтобы не убить Polza)
+    sem = asyncio.Semaphore(4)
+
+    async def _limited(idx_list):
+        async with sem:
+            await _send_batch(idx_list)
+
+    t0 = time.time()
+    await asyncio.gather(*[_limited(b) for b in batches])
+    elapsed = time.time() - t0
+
+    got = sum(1 for r in results if r is not None)
+    print(f"✅ [EMBED-BATCH] Готово: {got}/{total} за {elapsed:.2f}с "
+          f"(батчей: {len(batches)})")
+
+    return results  # type: ignore
+    
 async def search_priority(query: str) -> str:
     """Приоритетный keyword-поиск."""
     q_lower = query.lower()
@@ -1916,6 +1989,7 @@ def read_root():
     return {"status": "running", "message": "Feon RAG Adapter (TG + Web) работает!"}
 
 
+
 @app.post("/add_knowledge")
 async def add_knowledge(request: Request):
     try:
@@ -1927,18 +2001,21 @@ async def add_knowledge(request: Request):
         doc_vector = await get_embedding(text)
         stable_id = hashlib.md5(text.encode()).hexdigest()
 
-        qdrant.upsert(
+        await asyncio.to_thread(
+            qdrant.upsert,
             collection_name=COLLECTION_NAME,
             points=[models.PointStruct(
                 id=stable_id,
                 vector=doc_vector,
                 payload={"text": text},
             )],
+            wait=True,
         )
         return JSONResponse({"status": "success", "message": "Знание добавлено"})
     except Exception as e:
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
+
 
 
 @app.post("/upload_document")
@@ -1961,6 +2038,7 @@ async def upload_document(file: UploadFile = File(...)):
         else:
             return JSONResponse({"error": "Поддерживаются только .pdf и .docx"}, status_code=400)
 
+        # Разбиваем на чанки
         chunks = []
         paragraphs = text.split('\n\n')
         current_chunk = ""
@@ -1981,27 +2059,44 @@ async def upload_document(file: UploadFile = File(...)):
             chunks.append(current_chunk)
         chunks = [c for c in chunks if len(c.strip()) > 30]
 
-        success_count = 0
-        for i, chunk in enumerate(chunks):
-            try:
-                doc_vector = await get_embedding(chunk)
-                stable_id = hashlib.md5(f"{file.filename}_{i}".encode()).hexdigest()
+        if not chunks:
+            return JSONResponse({"error": "Не удалось разбить текст на чанки"}, status_code=400)
 
-                qdrant.upsert(
-                    collection_name=COLLECTION_NAME,
-                    points=[models.PointStruct(
-                        id=stable_id,
-                        vector=doc_vector,
-                        payload={"text": chunk, "source_file": file.filename},
-                    )],
-                )
-                success_count += 1
-            except Exception as e:
-                print(f"⚠️ Пропуск фрагмента {i}: {e}")
+        print(f"📄 [UPLOAD] {file.filename}: {len(chunks)} чанков, извлекаем эмбеддинги...")
+
+        # 🚀 БАТЧ-ЭМБЕДДИНГИ (одним махом)
+        try:
+            vectors = await get_embeddings_batch(chunks, batch_size=32)
+        except Exception as e:
+            print(f"❌ [UPLOAD] Батч-эмбеддинги упали: {e}")
+            return JSONResponse({"error": f"Ошибка эмбеддингов: {e}"}, status_code=500)
+
+        # Сохраняем в Qdrant
+        points = []
+        for i, chunk in enumerate(chunks):
+            vec = vectors[i] if i < len(vectors) else None
+            if vec is None:
+                print(f"⚠️ Пропуск фрагмента {i}: нет эмбеддинга")
+                continue
+            stable_id = hashlib.md5(f"{file.filename}_{i}".encode()).hexdigest()
+            points.append(models.PointStruct(
+                id=stable_id,
+                vector=vec,
+                payload={"text": chunk, "source_file": file.filename},
+            ))
+
+        if points:
+            await asyncio.to_thread(
+                qdrant.upsert,
+                collection_name=COLLECTION_NAME,
+                points=points,
+                wait=True,
+            )
+            print(f"✅ [UPLOAD] Сохранено {len(points)} точек за раз")
 
         return JSONResponse({
             "status": "success",
-            "message": f"Добавлено {success_count} из {len(chunks)} фрагментов",
+            "message": f"Добавлено {len(points)} из {len(chunks)} фрагментов",
         })
     except Exception as e:
         traceback.print_exc()
