@@ -947,6 +947,7 @@ async def save_to_history(user_id: str, role: str, content: str):
                     "timestamp": timestamp,
                 },
             )],
+            wait-True
         )
         print(f"✅ История сохранена: {safe_role} ({len(normalized_content)} симв.)")
 
