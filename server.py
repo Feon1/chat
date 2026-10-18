@@ -1776,11 +1776,7 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
             if footer:
                 final_text += f"\n\n━━━━━━━━━━━━━━━━\n{footer}"
 
-        await send_telegram_message(
-            chat_id,
-            final_text,
-            reply_to_message_id=reply_to_message_id if is_channel else None,
-        )
+        
 
         await send_telegram_message(
             chat_id,
