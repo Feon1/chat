@@ -77,8 +77,6 @@ POLZA_EMBEDDING_URL = os.getenv("POLZA_EMBEDDING_URL", "https://polza.ai/api/v1/
 COLLECTION_NAME = "xiaozhi_knowledge_max"
 HISTORY_COLLECTION = "chat_history_max"
 
-JINA_API_URL = "https://api.jina.ai/v1/embeddings"
-
 LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL")
 LOCAL_LLM_API_KEY = os.getenv("LOCAL_LLM_API_KEY")
 LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL")
@@ -109,8 +107,15 @@ def get_current_model() -> str:
     return _current_model
 
 
+def _model_display_name(model: str) -> str:
+    if model == "polza":
+        return "DeepSeek V4 Flash"
+    if model == "local":
+        return f"Локальная ({LOCAL_LLM_MODEL or 'Qwen'})"
+    return model
+
+
 async def load_current_model():
-    """Читает текущую модель из Qdrant."""
     global _current_model
     try:
         records = await asyncio.to_thread(
@@ -131,7 +136,6 @@ async def load_current_model():
 
 
 async def save_current_model(model: str):
-    """Сохраняет выбор модели в Qdrant."""
     global _current_model
     if model not in ("polza", "local"):
         raise ValueError(f"Неизвестная модель: {model}")
@@ -144,7 +148,8 @@ async def save_current_model(model: str):
                 id=_SETTINGS_MODEL_ID,
                 vector=[1.0],
                 payload={"key": "current_model", "value": model}
-            )]
+            )],
+            wait=True,
         )
         print(f"✅ Модель сохранена в Qdrant: {model}")
     except Exception as e:
@@ -162,7 +167,6 @@ if SYSTEM_PROMPT.strip():
 
 
 async def load_system_prompt():
-    """Читает SYSTEM_PROMPT из Qdrant. Если пусто — сохраняет туда значение из env."""
     global SYSTEM_PROMPT
     try:
         records = await asyncio.to_thread(
@@ -188,7 +192,6 @@ async def load_system_prompt():
 
 
 async def save_system_prompt(new_prompt: str, silent: bool = False):
-    """Сохраняет SYSTEM_PROMPT в Qdrant."""
     try:
         await asyncio.to_thread(
             qdrant.upsert,
@@ -197,7 +200,8 @@ async def save_system_prompt(new_prompt: str, silent: bool = False):
                 id=_SETTINGS_PROMPT_ID,
                 vector=[1.0],
                 payload={"key": "system_prompt", "value": new_prompt}
-            )]
+            )],
+            wait=True,
         )
         if not silent:
             print(f"✅ SYSTEM_PROMPT сохранён в Qdrant ({len(new_prompt)} симв.)")
@@ -224,16 +228,41 @@ _ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 RENDER_LINK_MARKER = "[RENDER_LINK]"
 
-# === Метрики в футере ответа (можно отключить через env SHOW_METRICS=false) ===
-SHOW_METRICS = os.getenv("SHOW_METRICS", "true").lower() in ("true", "1", "yes")
-print(f"📊 SHOW_METRICS={'ON' if SHOW_METRICS else 'OFF'}")
+# === Приоритетный поиск ===
+PRIORITY_KEYWORDS = [
+    "голем", "обитель", "левиафан",
+    "феон", "обители", "голема", "левиафана",
+]
+PRIORITY_SOURCES = [
+    "Обитель+Голем.pdf",
+    "realisti-ru.pdf",
+]
+
+
+# === Метрики последнего ответа (для /stat) ===
+_last_metrics: dict[str, dict] = {}
+
+
+def _save_last_metrics(user_id: str, metrics: dict, question: str = ""):
+    if not metrics:
+        return
+    _last_metrics[user_id] = {
+        **metrics,
+        "question": (question or "")[:100],
+        "timestamp": time.time(),
+    }
+    if len(_last_metrics) > 500:
+        oldest = min(_last_metrics, key=lambda k: _last_metrics[k].get("timestamp", 0))
+        _last_metrics.pop(oldest, None)
+
+
+def _get_last_metrics(user_id: str) -> dict | None:
+    return _last_metrics.get(user_id)
 
 
 def _fmt_metrics(metrics: dict) -> str:
-    """Форматирует метрики в одну строку для футера в Telegram."""
     if not metrics:
         return ""
-
     parts = [f"📊 {metrics.get('model', '?')}"]
 
     total = metrics.get("total_tokens")
@@ -248,7 +277,6 @@ def _fmt_metrics(metrics: dict) -> str:
     elif inp is not None or out is not None:
         parts.append(f"in {inp or 0} · out {out or 0}")
     else:
-        # Fallback — оценка из символов
         chars = metrics.get("prompt_chars")
         if chars:
             parts.append(f"~{chars // 2} токенов (оценка)")
@@ -270,16 +298,6 @@ def _fmt_metrics(metrics: dict) -> str:
         parts.append(f"{cost:.3f}₽")
 
     return " · ".join(parts)
-
-# === Приоритетный поиск ===
-PRIORITY_KEYWORDS = [
-    "голем", "обитель", "левиафан",
-    "феон", "обители", "голема", "левиафана",
-]
-PRIORITY_SOURCES = [
-    "Обитель+Голем.pdf",
-    "realisti-ru.pdf",
-]
 
 
 def verify_admin(request: Request):
@@ -555,7 +573,6 @@ def extract_text_from_rich_message(rich: dict) -> str:
 # ==========================================
 @app.on_event("startup")
 async def startup_event():
-    # 1. Коллекция для базы знаний (Polza dim=1536)
     try:
         info = qdrant.get_collection(COLLECTION_NAME)
         size = info.config.params.vectors.size
@@ -569,7 +586,6 @@ async def startup_event():
         )
         print(f"✅ Коллекция '{COLLECTION_NAME}' создана (dim=1536)")
 
-    # 2. Коллекция для истории
     try:
         qdrant.get_collection(HISTORY_COLLECTION)
         print(f"✅ Коллекция '{HISTORY_COLLECTION}' найдена")
@@ -580,7 +596,6 @@ async def startup_event():
         )
         print(f"✅ Коллекция '{HISTORY_COLLECTION}' создана")
 
-    # 2.5. Коллекция для настроек
     try:
         qdrant.get_collection(SETTINGS_COLLECTION)
         print(f"✅ Коллекция '{SETTINGS_COLLECTION}' найдена")
@@ -591,7 +606,6 @@ async def startup_event():
         )
         print(f"✅ Коллекция '{SETTINGS_COLLECTION}' создана")
 
-    # 3. Индексы для истории
     indices = [
         ("user_id", models.PayloadSchemaType.KEYWORD),
         ("role", models.PayloadSchemaType.KEYWORD),
@@ -608,7 +622,6 @@ async def startup_event():
         except Exception:
             print(f"ℹ️ Индекс '{field_name}' уже есть")
 
-    # 3.5. Индекс на text в коллекции знаний
     try:
         qdrant.create_payload_index(
             collection_name=COLLECTION_NAME,
@@ -619,7 +632,6 @@ async def startup_event():
     except Exception as e:
         print(f"ℹ️ Индекс на 'text': {e}")
 
-    # 4. Получаем bot_id + webhook
     global BOT_ID, BOT_USERNAME
     if TELEGRAM_BOT_TOKEN:
         try:
@@ -655,7 +667,6 @@ async def startup_event():
     else:
         print("⚠️ TELEGRAM_BOT_TOKEN или WEBHOOK_URL не найдены")
 
-    # 5. Регистрация команд и кнопки меню
     if TELEGRAM_BOT_TOKEN:
         commands = [
             {"command": "start", "description": "Начать диалог с Феоном"},
@@ -663,6 +674,7 @@ async def startup_event():
             {"command": "menu",  "description": "Меню быстрых действий"},
             {"command": "about", "description": "О Феоне"},
             {"command": "model", "description": "Показать/сменить модель"},
+            {"command": "stat",  "description": "Метрики последнего ответа"},
         ]
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -680,10 +692,7 @@ async def startup_event():
         except Exception as e:
             print(f"⚠️ Не удалось установить меню: {e}")
 
-    # 6. Загружаем сохранённую модель из Qdrant
     await load_current_model()
-
-    # 7. Загружаем SYSTEM_PROMPT из Qdrant (или сохраняем туда env-значение)
     await load_system_prompt()
 
 
@@ -731,30 +740,8 @@ async def get_embedding(text: str) -> list[float]:
     raise last_error
 
 
-# Предкомпилированный regex для отсева тестовых запросов (по границам слов)
-_JUNK_RE = re.compile(
-    r"\b(тест|проверка|привет|ты\s+тут|test|hello|hi|ок|ok)\b",
-    re.IGNORECASE,
-)
-
-
-def _is_junk_query(query: str) -> bool:
-    """Отсев коротких/тестовых запросов."""
-    q_stripped = query.strip()
-    if len(q_stripped) < 6:
-        print(f"⏭️ [SEARCH] Запрос короткий ({len(q_stripped)} симв.) — БЗ не ищем")
-        return True
-
-    # Ищем слова ЦЕЛИКОМ, а не подстроки
-    if len(query) < 40 and _JUNK_RE.search(query):
-        print(f"⏭️ [SEARCH] Похоже на тест — БЗ не ищем")
-        return True
-    return False
-
-async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list[list[float]]:
-    """Батч-эмбеддинги через Polza: N текстов за один HTTP-запрос.
-    Возвращает список векторов в том же порядке, что и входные texts.
-    Пустые тексты пропускаются (для них — None на соответствующей позиции)."""
+async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list:
+    """Батч-эмбеддинги через Polza: N текстов за один HTTP-запрос."""
     if not POLZA_EMBEDDING_API_KEY:
         raise ValueError("POLZA_EMBEDDING_API_KEY не задан")
 
@@ -769,7 +756,7 @@ async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list[l
         "Content-Type": "application/json",
     }
 
-    results: list[list[float] | None] = [None] * total
+    results: list = [None] * total
 
     async def _send_batch(indices: list[int]):
         payload_texts = [texts[i] for i in indices]
@@ -786,7 +773,6 @@ async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list[l
                     )
                     resp.raise_for_status()
                     body = resp.json()
-                    # OpenAI-совместимый формат: data = [{"embedding": [...], "index": i}, ...]
                     items = body.get("data") or []
                     if len(items) != len(indices):
                         print(f"⚠️ [EMBED-BATCH] Ожидали {len(indices)}, получили {len(items)}")
@@ -802,13 +788,11 @@ async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list[l
                     await asyncio.sleep(1.5 * attempt)
         print(f"❌ [EMBED-BATCH] батч провалился: {last_err}")
 
-    # Разбиваем на батчи
     batches = [
         list(range(i, min(i + batch_size, total)))
         for i in range(0, total, batch_size)
     ]
 
-    # Параллельно запускаем все батчи (ограничиваем конкурентность, чтобы не убить Polza)
     sem = asyncio.Semaphore(4)
 
     async def _limited(idx_list):
@@ -820,13 +804,30 @@ async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list[l
     elapsed = time.time() - t0
 
     got = sum(1 for r in results if r is not None)
-    print(f"✅ [EMBED-BATCH] Готово: {got}/{total} за {elapsed:.2f}с "
-          f"(батчей: {len(batches)})")
+    print(f"✅ [EMBED-BATCH] Готово: {got}/{total} за {elapsed:.2f}с (батчей: {len(batches)})")
 
-    return results  # type: ignore
-    
+    return results
+
+
+_JUNK_RE = re.compile(
+    r"\b(тест|проверка|привет|ты\s+тут|test|hello|hi|ок|ok)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_junk_query(query: str) -> bool:
+    q_stripped = query.strip()
+    if len(q_stripped) < 6:
+        print(f"⏭️ [SEARCH] Запрос короткий ({len(q_stripped)} симв.) — БЗ не ищем")
+        return True
+
+    if len(query) < 40 and _JUNK_RE.search(query):
+        print(f"⏭️ [SEARCH] Похоже на тест — БЗ не ищем")
+        return True
+    return False
+
+
 async def search_priority(query: str) -> str:
-    """Приоритетный keyword-поиск."""
     q_lower = query.lower()
     for kw in PRIORITY_KEYWORDS:
         if kw not in q_lower:
@@ -909,7 +910,6 @@ async def search_priority(query: str) -> str:
 
 
 async def search_knowledge(query: str) -> str:
-    """RAG-поиск в xiaozhi_knowledge_max — для веб-чата и локальной модели."""
     if _is_junk_query(query):
         return ""
 
@@ -955,7 +955,6 @@ async def search_knowledge(query: str) -> str:
 
 
 async def search_knowledge_max(query: str) -> str:
-    """RAG-поиск для Polza в Telegram: с приоритетным keyword-поиском."""
     if _is_junk_query(query):
         return ""
 
@@ -963,13 +962,11 @@ async def search_knowledge_max(query: str) -> str:
         print("⚠️ [FALLBACK-RAG] Нет POLZA_EMBEDDING_API_KEY")
         return ""
 
-    # 1. Приоритетный keyword-поиск
     priority_result = await search_priority(query)
     if priority_result:
         print(f"📄 [FALLBACK-RAG] Приоритетный результат: {len(priority_result)} символов")
         return priority_result
 
-    # 2. Обычный embedding-поиск
     try:
         vec = await get_embedding(query)
     except Exception as e:
@@ -1077,7 +1074,6 @@ async def save_to_history(user_id: str, role: str, content: str):
 
 
 async def get_history(user_id: str, limit: int = 50) -> list[dict]:
-    """Асинхронная обёртка над Qdrant scroll — не блокирует event loop."""
     try:
         records, _ = await asyncio.to_thread(
             qdrant.scroll,
@@ -1099,144 +1095,11 @@ async def get_history(user_id: str, limit: int = 50) -> list[dict]:
 
 
 # ==========================================
-# 🧠 ЯДРО ЧАТА (для веб-чата)
-# ==========================================
-async def process_message_core(user_id: str, text: str) -> str:
-    if len(text) > 1000:
-        return "Сообщение слишком длинное. Максимум 1000 символов."
-
-    if not POLZA_API_KEY:
-        return "Ошибка: не настроен ключ Polza AI."
-
-    print(f"🧠 Запрос от {user_id}: '{text[:50]}...'")
-    await save_to_history(user_id, "user", text)
-
-    history = await get_history(user_id, limit=7)  # последние 7 сообщений (с запасом)
-
-    context = await search_knowledge(text) if POLZA_EMBEDDING_API_KEY else ""
-
-    print(f"📄 [CONTEXT] Итоговый контекст (первые 300 символов): "
-          f"{context[:300] if context else 'пусто'}")
-
-    COMMON_TAIL = (
-        "Сначала кратко откликнись на текущее сообщение пользователя (1–2 абзаца, по существу). "
-        "Затем плавно перейди к общим философским и богословским размышлениям на эту тему, "
-        "опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
-        "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
-        "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
-        "Не повторяй формулировки из своих прошлых ответов. "
-        "Ответ должен быть содержательным, но не длиннее 1500 символов."
-    )
-
-    _q_re = re.compile(r"\b(как|почему|что|зачем|когда|где|кто)\b", re.IGNORECASE)
-    is_question = ("?" in text) or bool(_q_re.search(text))
-
-    if not is_question:
-        prompt = (
-            f"[Источник: web]\n\n"
-            f"Пользователь прислал текст:\n{text}\n\n"
-            f"Дай связный, естественный ответ, как в личной беседе. "
-            f"Не используй нумерацию, заголовки, списки, маркеры. "
-            f"Не перечисляй пункты — излагай мысли плавно, абзацами. "
-            f"Опирайся на философские и богословские идеи из системного промпта, "
-            f"контекста и базы знаний, не цитируй их дословно. "
-            f"Укажи пользователю путь Богу на основе базы знаний. "
-            f"Если пользователь прислал ссылку, проанализируй содержимое страницы "
-            f"(оно есть в контексте) и дай ответ. "
-            f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
-            f"{COMMON_TAIL}"
-        )
-    else:
-        prompt = (
-            f"[Источник: web]\n\n"
-            f"Вопрос пользователя: {text}\n\n"
-            f"Дай прямой, связный ответ, без нумерации, списков и заголовков. "
-            f"Излагай мысли как в разговоре — плавно и цельно. "
-            f"Используй философские и богословские идеи из системного промпта, "
-            f"базы знаний и контекста для обоснования, но не копируй их структуру. "
-            f"Укажи пользователю путь Богу на основе базы знаний. "
-            f"Если пользователь прислал ссылку, проанализируй содержимое страницы "
-            f"(оно есть в контексте) и дай ответ. "
-            f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
-            f"{COMMON_TAIL}"
-        )
-
-    if context:
-        context_intro = (
-            "Ниже приведены философские и богословские фрагменты "
-            "из базы знаний, релевантные запросу:\n\n"
-        )
-        prompt += f"\n\n{context_intro}{context}\n\n"
-        prompt += (
-            "Проанализируй текст пользователя через призму этих фрагментов. "
-            "Используй их для аргументации, сравнения и глубокого осмысления. "
-            "Не просто цитируй — интерпретируй. "
-            "Если пользователь прислал ссылку, проанализируй содержимое страницы "
-            "(оно есть в контексте) и дай ответ. "
-            "Укажи пользователю путь Богу на основе базы знаний. "
-            "Оформи ответ в одном сообщении, без заголовков и разделителей. "
-            "Сначала кратко откликнись на текущее сообщение пользователя (1–2 абзаца, по существу). "
-            "Затем плавно перейди к общим философским и богословским размышлениям на эту тему, "
-            "опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
-            "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
-            "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
-            "Не повторяй формулировки из своих прошлых ответов. "
-            "Ответ должен быть содержательным, но не длиннее 1500 символов."
-        )
-
-    print(f"📝 [PROMPT] Полная длина: {len(prompt)} символов")
-
-    # === История как отдельные turns (правильная структура) ===
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for msg in history[:-1]:  # исключаем только что сохранённый user-запрос
-        role = msg.get("role")
-        if role not in ("user", "assistant"):
-            continue
-        content = (msg.get("content") or "").strip()
-        if content:
-            messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": prompt})
-
-    print(f"📨 [MSG] Всего turns в messages: {len(messages)}")
-
-    async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
-        try:
-            response = await client.post(
-                "https://api.polza.ai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {POLZA_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": "deepseek/deepseek-v4-flash",
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": 2500,
-                    "thinking": {"type": "disabled"},
-                    "frequency_penalty": 0.6,
-                    "presence_penalty": 0.5,
-                },
-            )
-            response.raise_for_status()
-            answer = response.json()["choices"][0]["message"]["content"]
-        except Exception as e:
-            print(f"⚠️ Ошибка Polza API: {e}")
-            traceback.print_exc()
-            return "Извините, произошла ошибка при обращении к ИИ."
-
-    await save_to_history(user_id, "bot", answer)
-    return answer
-
-
-# ==========================================
-# 📡 ВЫЗОВ YANDEX CLOUD FUNCTION
+# 📡 YANDEX
 # ==========================================
 async def call_yandex_function(message_text: str, user_id: str) -> str:
-    payload = {
-        "message": message_text,
-        "user_id": user_id,
-        "platform": "Telegram",
-    }
-    headers = {
-        "Content-Type": "application/json",
-    }
+    payload = {"message": message_text, "user_id": user_id, "platform": "Telegram"}
+    headers = {"Content-Type": "application/json"}
 
     print(f"📡 Отправляем в Yandex: message='{message_text[:80]}...', user_id={user_id}")
 
@@ -1246,15 +1109,12 @@ async def call_yandex_function(message_text: str, user_id: str) -> str:
             async with session.post(YANDEX_FUNCTION_URL, json=payload, headers=headers) as resp:
                 raw = await resp.text()
                 print(f"📥 Ответ Yandex (HTTP {resp.status}): {raw[:300]}")
-
                 if resp.status != 200:
                     return f"❌ Yandex вернул ошибку HTTP {resp.status}. Попробуйте позже."
-
                 answer = _extract_answer_from_yandex(raw)
                 if not answer:
                     return "❌ Yandex вернул пустой ответ."
                 return answer
-
     except aiohttp.ClientError as e:
         print(f"❌ Сетевая ошибка при вызове Yandex: {e}")
         return "❌ Не удалось связаться с Yandex Cloud."
@@ -1295,13 +1155,11 @@ def _extract_answer_from_yandex(raw: str) -> str:
 
 
 # ==========================================
-# 🚑 ЛОКАЛЬНЫЙ FALLBACK
+# 🚑 LOCAL + POLZA (возвращают (content, metrics))
 # ==========================================
 
-
-
 async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500):
-    """Вызов локальной модели. Возвращает (content, metrics)."""
+    """Возвращает (content, metrics)."""
     prompt_chars = sum(len(m.get("content", "")) for m in messages)
     print(f"🖥️ [LOCAL-LLM] Отправка на {LOCAL_LLM_BASE_URL}, model={LOCAL_LLM_MODEL}")
     print(f"📥 [LOCAL-LLM] Вход: {len(messages)} turns, {prompt_chars} симв. (~{prompt_chars // 2} токенов)")
@@ -1363,9 +1221,8 @@ async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: i
             return "", metrics
 
 
-
 async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000):
-    """Вызов Polza. Возвращает (content, metrics)."""
+    """Возвращает (content, metrics)."""
     prompt_chars = sum(len(m.get("content", "")) for m in messages)
     print(f"☁️ [POLZA-LLM] Отправка в Polza, model=deepseek-v4-flash")
     print(f"📥 [POLZA-LLM] Вход: {len(messages)} turns, {prompt_chars} симв. (~{prompt_chars // 2} токенов)")
@@ -1432,7 +1289,6 @@ async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: i
             return "", metrics
 
 
-
 async def call_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000):
     """Роутер. Возвращает (answer, metrics)."""
     model = get_current_model()
@@ -1450,15 +1306,14 @@ async def call_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2
 
 async def local_fallback(payload_text: str, user_id: str,
                          platform: str = "Telegram",
-                         is_channel: bool = False) -> str:
+                         is_channel: bool = False):
+    """Возвращает (answer, metrics)."""
     print("🚑 [FALLBACK] Yandex недоступен — генерирую ответ локально")
 
-    # 1. Срезаем маркер
     text = payload_text
     if text.startswith(RENDER_LINK_MARKER):
         text = text[len(RENDER_LINK_MARKER):].lstrip()
 
-    # 2. Убираем заглушки
     text = text.replace(
         "[Содержимое страницы загрузить не удалось. Ответь по общим знаниям.]", ""
     ).strip()
@@ -1467,9 +1322,8 @@ async def local_fallback(payload_text: str, user_id: str,
     ).strip()
 
     if not text:
-        return "Извините, я не смог получить вопрос."
+        return "Извините, я не смог получить вопрос.", {}
 
-    # 3. RAG
     from_current = get_current_model()
     if from_current == "local":
         print("🖥️ [FALLBACK] Локальная модель — RAG урезан")
@@ -1486,12 +1340,9 @@ async def local_fallback(payload_text: str, user_id: str,
         else:
             print("⏭️ [FALLBACK] RAG пуст")
 
-    # 4. История — берём последние 7 сообщений (для правильной структуры messages)
     history_full = await get_history(user_id, limit=7)
-    # Исключаем последнее (только что сохранённое) — его отправим как prompt
     history_for_messages = history_full[:-1] if history_full else []
 
-    # 5. Формирование промпта (без истории внутри текста)
     current_model = get_current_model()
 
     print(f"📄 [CONTEXT] Итоговый контекст (первые 300 символов): "
@@ -1599,9 +1450,15 @@ async def local_fallback(payload_text: str, user_id: str,
                     "Ответ должен быть содержательным, но не длиннее 1500 символов."
                 )
 
-    print(f"📝 [PROMPT] Полная длина: {len(prompt)} символов")
+    total_chars = sum(len(m.get("content", "")) for m in [
+        {"content": SYSTEM_PROMPT},
+        *history_for_messages,
+        {"content": prompt},
+    ])
+    print(f"📝 [PROMPT] user-часть: {len(prompt)} симв.")
+    print(f"📨 [MSG] turns={len(history_for_messages) + 2}, всего на вход: {total_chars} симв. "
+          f"(~{total_chars // 2} токенов)")
 
-    # 6. Собираем messages правильно: system + history (ролями) + текущий user
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     for msg in history_for_messages:
         role = msg.get("role")
@@ -1612,10 +1469,6 @@ async def local_fallback(payload_text: str, user_id: str,
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
 
-    print(f"📨 [MSG] Всего turns в messages: {len(messages)}")
-
-    # 7. Вызов LLM
-   
     answer, metrics = await call_llm(messages, temperature=0.7, max_tokens=2000)
 
     if not answer or not answer.strip():
@@ -1644,20 +1497,228 @@ async def local_fallback(payload_text: str, user_id: str,
             await save_to_history(user_id, "bot", answer)
         except Exception as e:
             print(f"⚠️ [FALLBACK] Не удалось сохранить в историю: {e}")
+        _save_last_metrics(user_id, metrics, question=text)
 
-    return answer, metrics   # ← было просто answer
+    return answer, metrics
 
 
 # ==========================================
-# 🧵 ФОНОВАЯ ОБРАБОТКА СООБЩЕНИЙ TELEGRAM
+# 🧠 ЯДРО (веб-чат и TG) — возвращает dict
 # ==========================================
+async def process_message_core(user_id: str, text: str) -> dict:
+    text_stripped = text.strip()
+    cmd = text_stripped.lower().split()[0] if text_stripped else ""
 
+    # ===== Команды =====
+    if cmd in ("/model", "/модель"):
+        cur = get_current_model()
+        return {
+            "type": "command",
+            "command": "model_info",
+            "response": f"🤖 Текущая модель: {_model_display_name(cur)}\n\nВыберите модель:",
+            "current_model": cur,
+            "options": [
+                {"id": "polza", "label": "DeepSeek V4 Flash", "active": cur == "polza"},
+                {"id": "local", "label": f"Локальная ({LOCAL_LLM_MODEL or 'Qwen'})", "active": cur == "local"},
+            ],
+        }
+
+    if cmd in ("/model_polza", "/полза"):
+        await save_current_model("polza")
+        return {
+            "type": "command",
+            "command": "model_switched",
+            "response": f"✅ Модель переключена на {_model_display_name('polza')}",
+            "current_model": "polza",
+        }
+
+    if cmd in ("/model_local", "/локальная", "/модель_локальная"):
+        await save_current_model("local")
+        return {
+            "type": "command",
+            "command": "model_switched",
+            "response": f"✅ Модель переключена на {_model_display_name('local')}",
+            "current_model": "local",
+        }
+
+    if cmd in ("/stat", "/stats", "/стат", "/статистика"):
+        m = _get_last_metrics(user_id)
+        if not m:
+            return {
+                "type": "command",
+                "command": "stats",
+                "response": "📊 Пока нет данных. Отправьте сообщение, потом /stat.",
+            }
+        lines = ["📊 Последний ответ"]
+        if m.get("question"):
+            lines.append(f"Вопрос: «{m['question']}»")
+        lines.append("")
+        lines.append(_fmt_metrics(m) or "—")
+        return {
+            "type": "command",
+            "command": "stats",
+            "response": "\n\n".join(lines),
+            "metrics": m,
+        }
+
+    if cmd in ("/help", "/помощь"):
+        return {
+            "type": "command",
+            "command": "help",
+            "response": (
+                "📖 Команды:\n\n"
+                "/model — показать и сменить модель\n"
+                "/model_polza — DeepSeek V4 Flash\n"
+                "/model_local — Локальная (Qwen)\n"
+                "/stat — метрики последнего ответа\n"
+                "/help — эта справка"
+            ),
+        }
+
+    # ===== Обычное сообщение =====
+    if len(text) > 1000:
+        return {"type": "message", "response": "Сообщение слишком длинное. Максимум 1000 символов.", "error": True}
+
+    if not POLZA_API_KEY and get_current_model() == "polza":
+        return {"type": "message", "response": "Ошибка: не настроен ключ Polza AI.", "error": True}
+
+    print(f"🧠 Запрос от {user_id}: '{text[:50]}...'")
+    await save_to_history(user_id, "user", text)
+
+    history = await get_history(user_id, limit=7)
+    context = await search_knowledge(text) if POLZA_EMBEDDING_API_KEY else ""
+
+    print(f"📄 [CONTEXT] Итоговый контекст (первые 300 символов): "
+          f"{context[:300] if context else 'пусто'}")
+
+    COMMON_TAIL = (
+        "Сначала кратко откликнись на текущее сообщение пользователя (1–2 абзаца, по существу). "
+        "Затем плавно перейди к общим философским и богословским размышлениям на эту тему, "
+        "опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
+        "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
+        "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
+        "Не повторяй формулировки из своих прошлых ответов. "
+        "Ответ должен быть содержательным, но не длиннее 1500 символов."
+    )
+
+    _q_re = re.compile(r"\b(как|почему|что|зачем|когда|где|кто)\b", re.IGNORECASE)
+    is_question = ("?" in text) or bool(_q_re.search(text))
+
+    if not is_question:
+        prompt = (
+            f"[Источник: web]\n\n"
+            f"Пользователь прислал текст:\n{text}\n\n"
+            f"Дай связный, естественный ответ, как в личной беседе. "
+            f"Не используй нумерацию, заголовки, списки, маркеры. "
+            f"Не перечисляй пункты — излагай мысли плавно, абзацами. "
+            f"Опирайся на философские и богословские идеи из системного промпта, "
+            f"контекста и базы знаний, не цитируй их дословно. "
+            f"Укажи пользователю путь Богу на основе базы знаний. "
+            f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
+            f"{COMMON_TAIL}"
+        )
+    else:
+        prompt = (
+            f"[Источник: web]\n\n"
+            f"Вопрос пользователя: {text}\n\n"
+            f"Дай прямой, связный ответ, без нумерации, списков и заголовков. "
+            f"Излагай мысли как в разговоре — плавно и цельно. "
+            f"Используй философские и богословские идеи из системного промпта, "
+            f"базы знаний и контекста для обоснования, но не копируй их структуру. "
+            f"Укажи пользователю путь Богу на основе базы знаний. "
+            f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
+            f"{COMMON_TAIL}"
+        )
+
+    if context:
+        context_intro = (
+            "Ниже приведены философские и богословские фрагменты "
+            "из базы знаний, релевантные запросу:\n\n"
+        )
+        prompt += f"\n\n{context_intro}{context}\n\n"
+        prompt += (
+            "Проанализируй текст пользователя через призму этих фрагментов. "
+            "Используй их для аргументации, сравнения и глубокого осмысления. "
+            "Не просто цитируй — интерпретируй. "
+            "Укажи пользователю путь Богу на основе базы знаний. "
+            "Оформи ответ в одном сообщении, без заголовков и разделителей. "
+            "Сначала кратко откликнись на текущее сообщение пользователя (1–2 абзаца, по существу). "
+            "Затем плавно перейди к общим философским и богословским размышлениям на эту тему, "
+            "опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
+            "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
+            "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
+            "Не повторяй формулировки из своих прошлых ответов. "
+            "Ответ должен быть содержательным, но не длиннее 1500 символов."
+        )
+
+    print(f"📝 [PROMPT] user-часть: {len(prompt)} симв.")
+
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for msg in history[:-1]:
+        role = msg.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = (msg.get("content") or "").strip()
+        if content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": prompt})
+
+    total_chars = sum(len(m.get("content", "")) for m in messages)
+    print(f"📨 [MSG] turns={len(messages)}, всего на вход: {total_chars} симв. "
+          f"(~{total_chars // 2} токенов)")
+
+    answer, metrics = await call_llm(messages, temperature=0.7, max_tokens=2500)
+
+    if not answer or not answer.strip():
+        print("🔁 [LLM] Пусто — пробуем с сокращённым промптом")
+        short_prompt = prompt[:6000]
+        msgs2 = list(messages[:-1]) + [{"role": "user", "content": short_prompt}]
+        answer, metrics = await call_llm(msgs2, temperature=0.7, max_tokens=1500)
+
+    if not answer or not answer.strip():
+        print("🔁 [LLM] Пусто — пробуем без БЗ")
+        min_prompt = f"[Источник: web]\n\nПользователь: {text[:2000]}\n\nДай отклик по существу."
+        msgs3 = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": min_prompt},
+        ]
+        answer, metrics = await call_llm(msgs3, temperature=0.7, max_tokens=1200)
+
+    if not answer or not answer.strip():
+        return {
+            "type": "message",
+            "response": "Извините, ИИ-модель временно не отвечает. Попробуйте ещё раз.",
+            "error": True,
+            "model": metrics.get("model") if metrics else None,
+        }
+
+    await save_to_history(user_id, "bot", answer)
+    _save_last_metrics(user_id, metrics, question=text)
+
+    return {
+        "type": "message",
+        "response": answer,
+        "model": metrics.get("model"),
+        "usage": {
+            "in": metrics.get("prompt_tokens"),
+            "out": metrics.get("completion_tokens"),
+            "total": metrics.get("total_tokens"),
+        },
+        "elapsed": metrics.get("elapsed"),
+        "speed": metrics.get("speed"),
+        "finish": metrics.get("finish"),
+        "cost_rub": metrics.get("cost_rub"),
+    }
+
+
+# ==========================================
+# 🧵 ФОНОВАЯ ОБРАБОТКА TELEGRAM
+# ==========================================
 async def process_and_reply(chat_id: int, user_id: str, text: str,
                             is_channel: bool = False, reply_to_message_id: int = None,
                             post_link: str = None, is_group: bool = False):
     try:
-        print(f"🧵 [BG] Начинаем обработку для chat_id={chat_id}, "
-              f"reply_to={reply_to_message_id}")
+        print(f"🧵 [BG] Начинаем обработку для chat_id={chat_id}, reply_to={reply_to_message_id}")
 
         if not is_channel and not is_group:
             await send_telegram_message(
@@ -1680,7 +1741,6 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
                 print(f"🌐 [BG] Тип: обычный сайт")
 
             page_text = await fetch_url_content(page_url)
-
             if page_text:
                 print(f"📄 [BG] Извлечено {len(page_text)} символов из ссылки")
             else:
@@ -1706,30 +1766,22 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
             else:
                 payload_text = text
                 print(f"📤 [BG] Без ссылки — простой текст ({len(payload_text)} симв.)")
-
         elif page_text:
-            page_text_safe = (
-                page_text
-                .replace("https://", "")
-                .replace("http://", "")
-            )
+            page_text_safe = page_text.replace("https://", "").replace("http://", "")
             payload_text = (
                 f"{RENDER_LINK_MARKER}\n"
                 f"{text_clean}\n\n"
                 f"Содержимое страницы, которую прислал пользователь:\n"
                 f"{page_text_safe}"
             )
-
         else:
             payload_text = (
                 f"{RENDER_LINK_MARKER}\n"
                 f"{text_clean}\n\n"
-                f"[Содержимое страницы загрузить не удалось. "
-                f"Ответь по общим знаниям.]"
+                f"[Содержимое страницы загрузить не удалось. Ответь по общим знаниям.]"
             )
 
-        print(f"📤 [BG] Payload для Yandex: {len(payload_text)} симв. "
-              f"Начало: {payload_text[:120]!r}")
+        print(f"📤 [BG] Payload для Yandex: {len(payload_text)} симв. Начало: {payload_text[:120]!r}")
 
         response_text = await call_yandex_function(payload_text, user_id)
         print(f"🧵 [BG] Ответ Yandex: {response_text[:120]}...")
@@ -1740,11 +1792,10 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
             or response_text.startswith("Извините, произошла ошибка")
             or response_text.startswith("Извините, я не смог сформулировать")
         )
-      
         if is_yandex_failed:
             print("🚑 [BG] Yandex недоступен — переключаюсь на локальный fallback")
             try:
-                response_text, metrics = await local_fallback(
+                response_text, _ = await local_fallback(
                     payload_text, user_id,
                     platform="Telegram",
                     is_channel=is_channel,
@@ -1753,13 +1804,11 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
                 print(f"❌ [BG] Fallback тоже упал: {e}")
                 traceback.print_exc()
                 response_text = ""
-                metrics = {}
 
         if not response_text or not response_text.strip():
             print("⚠️ [BG] Пустой ответ — в чат не отправляем")
             return
 
-      
         if is_channel and post_link:
             final_text = (
                 f"@Feon_ai_bot говорит:\n\n"
@@ -1770,13 +1819,7 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
         else:
             final_text = response_text
 
-        # 📊 Футер с метриками (можно выключить через SHOW_METRICS=false)
-        if SHOW_METRICS and metrics:
-            footer = _fmt_metrics(metrics)
-            if footer:
-                final_text += f"\n\n━━━━━━━━━━━━━━━━\n{footer}"
-
-        
+        # Метрики — только по команде /stat, автоматический футер не добавляется
 
         await send_telegram_message(
             chat_id,
@@ -1795,7 +1838,7 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
 
 
 # ==========================================
-# 📱 TELEGRAM ИНТЕГРАЦИЯ
+# 📱 TELEGRAM SEND
 # ==========================================
 async def send_telegram_message(chat_id, text, reply_to_message_id=None, parse_mode=None):
     MAX_LEN = 4000
@@ -1843,7 +1886,7 @@ async def send_telegram_message(chat_id, text, reply_to_message_id=None, parse_m
 
 
 # ==========================================
-# 🎯 WEBHOOK
+# 🎯 WEBHOOK TELEGRAM
 # ==========================================
 @app.post("/webhook/telegram")
 async def telegram_webhook(update: dict):
@@ -1861,7 +1904,6 @@ async def telegram_webhook(update: dict):
             return {"ok": True}
 
         chat_id = post["chat"]["id"]
-        chat_title = post["chat"].get("title", "канал")
         user_id = f"tg_channel_{chat_id}"
 
         text = (post.get("text") or post.get("caption") or "").strip()
@@ -2004,30 +2046,32 @@ async def telegram_webhook(update: dict):
                 "Помогу осмыслить текст, ссылку или философский вопрос. "
                 "Отвечаю по существу, с опорой на христианскую традицию.\n\n"
                 "Команды:\n"
-                "/help — справка и примеры\n"
-                "/menu — меню быстрых действий\n"
+                "/help — справка\n"
+                "/menu — быстрые действия\n"
+                "/model — показать/сменить модель\n"
+                "/stat — метрики последнего ответа\n"
                 "/about — о Феоне\n\n"
                 "Просто напиши что-нибудь — и я отвечу."
             )
             return {"ok": True}
 
-        if cmd == "/help":
+        if cmd in ("/help", "/помощь"):
             await send_telegram_message(
                 chat_id,
                 "📖 Справка:\n\n"
                 "Что умею:\n"
                 "• Отвечать на вопросы — простые и сложные\n"
                 "• Разбирать ссылки (статьи, посты)\n"
-                "• Осмыслять длинные тексты — отправь текст, потом /конец\n"
                 "• Давать философский отклик\n\n"
                 "Работа в группах:\n"
                 f"@{BOT_USERNAME} вопрос\n"
-                f"#феон вопрос\n"
-                "Или ответом на моё сообщение."
-                "Управление моделью:\n"
-                "/model — показать текущую\n"
-                "/model_polza — переключить на Polza\n"
-                "/model_local — переключить на локальную\n\n"
+                "#феон вопрос\n"
+                "Или ответом на моё сообщение.\n\n"
+                "Команды:\n"
+                "/model — показать/сменить модель\n"
+                "/model_polza — DeepSeek V4 Flash\n"
+                "/model_local — Локальная (Qwen)\n"
+                "/stat — метрики последнего ответа"
             )
             return {"ok": True}
 
@@ -2058,13 +2102,12 @@ async def telegram_webhook(update: dict):
 
         if cmd == "/model":
             cur = get_current_model()
-            name = "DeepSeek V4 Flash" if cur == "polza" else f"Локальная ({LOCAL_LLM_MODEL})"
             await send_telegram_message(
                 chat_id,
-                f"🤖 Текущая модель: *{name}*\n\n"
+                f"🤖 Текущая модель: {_model_display_name(cur)}\n\n"
                 f"Сменить:\n"
-                f"/model_polza — (DeepSeek V4 Flash)\n"
-                f"/model_local — Локальная LLM"
+                f"/model_polza — DeepSeek V4 Flash\n"
+                f"/model_local — Локальная ({LOCAL_LLM_MODEL or 'Qwen'})"
             )
             return {"ok": True}
 
@@ -2072,7 +2115,7 @@ async def telegram_webhook(update: dict):
             await save_current_model("polza")
             await send_telegram_message(
                 chat_id,
-                "✅ Модель переключена на *DeepSeek V4 Flash*"
+                f"✅ Модель переключена на {_model_display_name('polza')}"
             )
             return {"ok": True}
 
@@ -2080,9 +2123,25 @@ async def telegram_webhook(update: dict):
             await save_current_model("local")
             await send_telegram_message(
                 chat_id,
-                f"✅ Модель переключена на *Локальную* ({LOCAL_LLM_MODEL})\n\n"
-                f"⚠️ Работает только если funnel активен."
+                f"✅ Модель переключена на {_model_display_name('local')}"
             )
+            return {"ok": True}
+
+        if cmd in ("/stat", "/stats", "/стат", "/статистика"):
+            m = _get_last_metrics(user_id)
+            if not m:
+                await send_telegram_message(
+                    chat_id,
+                    "📊 Пока нет данных. Отправьте сообщение, потом /stat."
+                )
+                return {"ok": True}
+
+            lines = ["📊 Последний ответ"]
+            if m.get("question"):
+                lines.append(f"Вопрос: «{m['question']}»")
+            lines.append("")
+            lines.append(_fmt_metrics(m) or "—")
+            await send_telegram_message(chat_id, "\n\n".join(lines))
             return {"ok": True}
 
         print(f"💬 [MESSAGE] chat_id={chat_id}, user_id={user_id}, text={text[:60]!r}")
@@ -2096,125 +2155,11 @@ async def telegram_webhook(update: dict):
 
 
 # ==========================================
-# 🌐 ЭНДПОИНТЫ ДЛЯ ФРОНТЕНДА И АДМИНКИ
+# 🌐 ЭНДПОИНТЫ
 # ==========================================
 @app.get("/")
 def read_root():
     return {"status": "running", "message": "Feon RAG Adapter (TG + Web) работает!"}
-
-
-
-@app.post("/add_knowledge")
-async def add_knowledge(request: Request):
-    try:
-        body = await request.json()
-        text = body.get("text", "")
-        if not text or len(text.strip()) < 10:
-            return JSONResponse({"error": "Текст слишком короткий"}, status_code=400)
-
-        doc_vector = await get_embedding(text)
-        stable_id = hashlib.md5(text.encode()).hexdigest()
-
-        await asyncio.to_thread(
-            qdrant.upsert,
-            collection_name=COLLECTION_NAME,
-            points=[models.PointStruct(
-                id=stable_id,
-                vector=doc_vector,
-                payload={"text": text},
-            )],
-            wait=True,
-        )
-        return JSONResponse({"status": "success", "message": "Знание добавлено"})
-    except Exception as e:
-        traceback.print_exc()
-        return JSONResponse({"error": str(e)}, status_code=500)
-
-
-
-@app.post("/upload_document")
-async def upload_document(file: UploadFile = File(...)):
-    try:
-        import io
-        from pypdf import PdfReader
-        from docx import Document
-
-        filename = file.filename.lower()
-        content = await file.read()
-        text = ""
-
-        if filename.endswith('.pdf'):
-            reader = PdfReader(io.BytesIO(content))
-            text = "\n\n".join([page.extract_text() or "" for page in reader.pages])
-        elif filename.endswith('.docx'):
-            doc = Document(io.BytesIO(content))
-            text = "\n\n".join([para.text for para in doc.paragraphs])
-        else:
-            return JSONResponse({"error": "Поддерживаются только .pdf и .docx"}, status_code=400)
-
-        # Разбиваем на чанки
-        chunks = []
-        paragraphs = text.split('\n\n')
-        current_chunk = ""
-        for para in paragraphs:
-            para = para.strip()
-            if not para:
-                continue
-            if len(current_chunk) + len(para) <= 800:
-                current_chunk += (("\n\n" if current_chunk else "") + para)
-            else:
-                if current_chunk:
-                    chunks.append(current_chunk)
-                if len(para) > 800:
-                    for i in range(0, len(para), 700):
-                        chunks.append(para[i:i + 800])
-                current_chunk = ""
-        if current_chunk:
-            chunks.append(current_chunk)
-        chunks = [c for c in chunks if len(c.strip()) > 30]
-
-        if not chunks:
-            return JSONResponse({"error": "Не удалось разбить текст на чанки"}, status_code=400)
-
-        print(f"📄 [UPLOAD] {file.filename}: {len(chunks)} чанков, извлекаем эмбеддинги...")
-
-        # 🚀 БАТЧ-ЭМБЕДДИНГИ (одним махом)
-        try:
-            vectors = await get_embeddings_batch(chunks, batch_size=32)
-        except Exception as e:
-            print(f"❌ [UPLOAD] Батч-эмбеддинги упали: {e}")
-            return JSONResponse({"error": f"Ошибка эмбеддингов: {e}"}, status_code=500)
-
-        # Сохраняем в Qdrant
-        points = []
-        for i, chunk in enumerate(chunks):
-            vec = vectors[i] if i < len(vectors) else None
-            if vec is None:
-                print(f"⚠️ Пропуск фрагмента {i}: нет эмбеддинга")
-                continue
-            stable_id = hashlib.md5(f"{file.filename}_{i}".encode()).hexdigest()
-            points.append(models.PointStruct(
-                id=stable_id,
-                vector=vec,
-                payload={"text": chunk, "source_file": file.filename},
-            ))
-
-        if points:
-            await asyncio.to_thread(
-                qdrant.upsert,
-                collection_name=COLLECTION_NAME,
-                points=points,
-                wait=True,
-            )
-            print(f"✅ [UPLOAD] Сохранено {len(points)} точек за раз")
-
-        return JSONResponse({
-            "status": "success",
-            "message": f"Добавлено {len(points)} из {len(chunks)} фрагментов",
-        })
-    except Exception as e:
-        traceback.print_exc()
-        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.post("/query")
@@ -2226,10 +2171,11 @@ async def handle_query(request: Request):
         if not message:
             return JSONResponse({"error": "Сообщение не может быть пустым"}, status_code=400)
 
-        base_answer = await process_message_core(user_id, message)
-        return JSONResponse({"response": base_answer})
+        result = await process_message_core(user_id, message)
+        return JSONResponse(result)
     except Exception as e:
         print(f"❌ Ошибка в /query: {e}")
+        traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -2392,6 +2338,115 @@ async def get_all_knowledge(request: Request, offset: int = 0, limit: int = 500)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.post("/add_knowledge")
+async def add_knowledge(request: Request):
+    try:
+        body = await request.json()
+        text = body.get("text", "")
+        if not text or len(text.strip()) < 10:
+            return JSONResponse({"error": "Текст слишком короткий"}, status_code=400)
+
+        doc_vector = await get_embedding(text)
+        stable_id = hashlib.md5(text.encode()).hexdigest()
+
+        await asyncio.to_thread(
+            qdrant.upsert,
+            collection_name=COLLECTION_NAME,
+            points=[models.PointStruct(
+                id=stable_id,
+                vector=doc_vector,
+                payload={"text": text},
+            )],
+            wait=True,
+        )
+        return JSONResponse({"status": "success", "message": "Знание добавлено"})
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/upload_document")
+async def upload_document(file: UploadFile = File(...)):
+    try:
+        import io
+        from pypdf import PdfReader
+        from docx import Document
+
+        filename = file.filename.lower()
+        content = await file.read()
+        text = ""
+
+        if filename.endswith('.pdf'):
+            reader = PdfReader(io.BytesIO(content))
+            text = "\n\n".join([page.extract_text() or "" for page in reader.pages])
+        elif filename.endswith('.docx'):
+            doc = Document(io.BytesIO(content))
+            text = "\n\n".join([para.text for para in doc.paragraphs])
+        else:
+            return JSONResponse({"error": "Поддерживаются только .pdf и .docx"}, status_code=400)
+
+        chunks = []
+        paragraphs = text.split('\n\n')
+        current_chunk = ""
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
+                continue
+            if len(current_chunk) + len(para) <= 800:
+                current_chunk += (("\n\n" if current_chunk else "") + para)
+            else:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                if len(para) > 800:
+                    for i in range(0, len(para), 700):
+                        chunks.append(para[i:i + 800])
+                current_chunk = ""
+        if current_chunk:
+            chunks.append(current_chunk)
+        chunks = [c for c in chunks if len(c.strip()) > 30]
+
+        if not chunks:
+            return JSONResponse({"error": "Не удалось разбить текст на чанки"}, status_code=400)
+
+        print(f"📄 [UPLOAD] {file.filename}: {len(chunks)} чанков, батч-эмбеддинги...")
+
+        try:
+            vectors = await get_embeddings_batch(chunks, batch_size=32)
+        except Exception as e:
+            print(f"❌ [UPLOAD] Батч-эмбеддинги упали: {e}")
+            return JSONResponse({"error": f"Ошибка эмбеддингов: {e}"}, status_code=500)
+
+        points = []
+        for i, chunk in enumerate(chunks):
+            vec = vectors[i] if i < len(vectors) else None
+            if vec is None:
+                print(f"⚠️ Пропуск фрагмента {i}: нет эмбеддинга")
+                continue
+            stable_id = hashlib.md5(f"{file.filename}_{i}".encode()).hexdigest()
+            points.append(models.PointStruct(
+                id=stable_id,
+                vector=vec,
+                payload={"text": chunk, "source_file": file.filename},
+            ))
+
+        if points:
+            await asyncio.to_thread(
+                qdrant.upsert,
+                collection_name=COLLECTION_NAME,
+                points=points,
+                wait=True,
+            )
+            print(f"✅ [UPLOAD] Сохранено {len(points)} точек за раз")
+
+        return JSONResponse({
+            "status": "success",
+            "message": f"Добавлено {len(points)} из {len(chunks)} фрагментов",
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.delete("/delete_knowledge")
 async def delete_knowledge(request: Request):
     verify_admin(request)
@@ -2456,20 +2511,15 @@ async def parse_url_endpoint(request: Request):
     if not url or not url.startswith(("http://", "https://")):
         return JSONResponse({"error": "url is required"}, status_code=400)
 
-    print(f"🌐 [PARSE_URL] Запрос из Yandex: {url}")
+    print(f"🌐 [PARSE_URL] Запрос: {url}")
     text = await fetch_url_content(url)
     print(f"🌐 [PARSE_URL] Отдаём {len(text)} символов")
 
-    return JSONResponse({
-        "url": url,
-        "text": text,
-        "ok": bool(text),
-    })
+    return JSONResponse({"url": url, "text": text, "ok": bool(text)})
 
 
 @app.get("/get_system_prompt")
 async def get_system_prompt(request: Request):
-    """Возвращает текущий SYSTEM_PROMPT (для админки)."""
     verify_admin(request)
     return JSONResponse({
         "prompt": SYSTEM_PROMPT,
