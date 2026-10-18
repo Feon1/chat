@@ -224,6 +224,53 @@ _ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 RENDER_LINK_MARKER = "[RENDER_LINK]"
 
+# === Метрики в футере ответа (можно отключить через env SHOW_METRICS=false) ===
+SHOW_METRICS = os.getenv("SHOW_METRICS", "true").lower() in ("true", "1", "yes")
+print(f"📊 SHOW_METRICS={'ON' if SHOW_METRICS else 'OFF'}")
+
+
+def _fmt_metrics(metrics: dict) -> str:
+    """Форматирует метрики в одну строку для футера в Telegram."""
+    if not metrics:
+        return ""
+
+    parts = [f"📊 {metrics.get('model', '?')}"]
+
+    total = metrics.get("total_tokens")
+    inp = metrics.get("prompt_tokens")
+    out = metrics.get("completion_tokens")
+
+    if total is not None:
+        line = f"{total} токенов"
+        if inp is not None and out is not None:
+            line += f" (in {inp} · out {out})"
+        parts.append(line)
+    elif inp is not None or out is not None:
+        parts.append(f"in {inp or 0} · out {out or 0}")
+    else:
+        # Fallback — оценка из символов
+        chars = metrics.get("prompt_chars")
+        if chars:
+            parts.append(f"~{chars // 2} токенов (оценка)")
+
+    elapsed = metrics.get("elapsed")
+    if elapsed:
+        parts.append(f"{elapsed:.1f}с")
+
+    speed = metrics.get("speed")
+    if speed:
+        parts.append(f"{speed:.1f} симв/с")
+
+    finish = metrics.get("finish")
+    if finish:
+        parts.append(f"finish={finish}")
+
+    cost = metrics.get("cost_rub")
+    if cost:
+        parts.append(f"{cost:.3f}₽")
+
+    return " · ".join(parts)
+
 # === Приоритетный поиск ===
 PRIORITY_KEYWORDS = [
     "голем", "обитель", "левиафан",
@@ -1251,9 +1298,16 @@ def _extract_answer_from_yandex(raw: str) -> str:
 # 🚑 ЛОКАЛЬНЫЙ FALLBACK
 # ==========================================
 
-async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500) -> str:
-    """Вызов локальной модели через Tailscale (OpenAI-совместимый API)."""
+
+
+async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500):
+    """Вызов локальной модели. Возвращает (content, metrics)."""
+    prompt_chars = sum(len(m.get("content", "")) for m in messages)
     print(f"🖥️ [LOCAL-LLM] Отправка на {LOCAL_LLM_BASE_URL}, model={LOCAL_LLM_MODEL}")
+    print(f"📥 [LOCAL-LLM] Вход: {len(messages)} turns, {prompt_chars} симв. (~{prompt_chars // 2} токенов)")
+
+    t0 = time.time()
+    metrics = {"model": "local", "prompt_chars": prompt_chars}
 
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(180.0, connect=60.0, write=30.0, pool=30.0),
@@ -1273,22 +1327,51 @@ async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: i
                 },
             )
             r.raise_for_status()
+            elapsed = time.time() - t0
             data = r.json()
+
+            usage = data.get("usage") or {}
+            if usage:
+                metrics["prompt_tokens"] = usage.get("prompt_tokens")
+                metrics["completion_tokens"] = usage.get("completion_tokens")
+                metrics["total_tokens"] = usage.get("total_tokens")
+                print(f"🔍 [LOCAL-LLM] usage={usage}")
+
             if data.get("choices"):
-                content = data["choices"][0].get("message", {}).get("content") or ""
-                print(f"✅ [LOCAL-LLM] Ответ: {len(content)} символов")
-                return content
+                ch = data["choices"][0]
+                content = ch.get("message", {}).get("content") or ""
+                finish = ch.get("finish_reason")
+                speed = len(content) / elapsed if elapsed > 0 else 0
+
+                metrics["elapsed"] = elapsed
+                metrics["speed"] = speed
+                metrics["finish"] = finish
+                metrics["answer_chars"] = len(content)
+
+                print(f"✅ [LOCAL-LLM] Ответ: {len(content)} симв. за {elapsed:.2f}с "
+                      f"({speed:.1f} симв/с), finish={finish}")
+                return content, metrics
+
             print(f"⚠️ [LOCAL-LLM] Нет choices: {json.dumps(data, ensure_ascii=False)[:300]}")
-            return ""
+            metrics["error"] = "no_choices"
+            return "", metrics
         except Exception as e:
-            print(f"❌ [LOCAL-LLM] Ошибка: {type(e).__name__}: {e}")
+            elapsed = time.time() - t0
+            print(f"❌ [LOCAL-LLM] Ошибка через {elapsed:.2f}с: {type(e).__name__}: {e}")
             traceback.print_exc()
-            return ""
+            metrics["error"] = type(e).__name__
+            return "", metrics
 
 
-async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000) -> str:
-    """Вызов Polza (DeepSeek V4 Flash)."""
+
+async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000):
+    """Вызов Polza. Возвращает (content, metrics)."""
+    prompt_chars = sum(len(m.get("content", "")) for m in messages)
     print(f"☁️ [POLZA-LLM] Отправка в Polza, model=deepseek-v4-flash")
+    print(f"📥 [POLZA-LLM] Вход: {len(messages)} turns, {prompt_chars} симв. (~{prompt_chars // 2} токенов)")
+
+    t0 = time.time()
+    metrics = {"model": "polza", "prompt_chars": prompt_chars}
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
         try:
@@ -1310,37 +1393,57 @@ async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: i
                 json=polza_json,
             )
             r.raise_for_status()
+            elapsed = time.time() - t0
             data = r.json()
 
             if "usage" in data:
-                print(f"🔍 [POLZA-LLM] usage={data['usage']}")
+                usage = data["usage"]
+                metrics["prompt_tokens"] = usage.get("prompt_tokens")
+                metrics["completion_tokens"] = usage.get("completion_tokens")
+                metrics["total_tokens"] = usage.get("total_tokens")
+                metrics["cost_rub"] = usage.get("cost_rub")
+                print(f"🔍 [POLZA-LLM] usage={usage}")
 
             if data.get("choices"):
                 ch = data["choices"][0]
                 msg = ch.get("message", {}) or {}
                 content = msg.get("content") or ""
                 reasoning = msg.get("reasoning") or ""
+                speed = len(content) / elapsed if elapsed > 0 else 0
+
+                metrics["elapsed"] = elapsed
+                metrics["speed"] = speed
+                metrics["finish"] = ch.get("finish_reason")
+                metrics["answer_chars"] = len(content)
+
                 print(f"🔍 [POLZA-LLM] finish={ch.get('finish_reason')}, "
-                      f"content_len={len(content)}, reasoning_len={len(reasoning)}")
-                return content
+                      f"content_len={len(content)}, reasoning_len={len(reasoning)}, "
+                      f"time={elapsed:.2f}с")
+                return content, metrics
+
             print(f"⚠️ [POLZA-LLM] Нет choices")
-            return ""
+            metrics["error"] = "no_choices"
+            return "", metrics
         except Exception as e:
-            print(f"❌ [POLZA-LLM] Ошибка: {type(e).__name__}: {e}")
+            elapsed = time.time() - t0
+            print(f"❌ [POLZA-LLM] Ошибка через {elapsed:.2f}с: {type(e).__name__}: {e}")
             traceback.print_exc()
-            return ""
+            metrics["error"] = type(e).__name__
+            return "", metrics
 
 
-async def call_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000) -> str:
-    """Роутер: вызывает модель согласно текущей настройке."""
+
+async def call_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000):
+    """Роутер. Возвращает (answer, metrics)."""
     model = get_current_model()
     print(f"🎛️ [LLM] Используем модель: {model}")
     if model == "local":
-        answer = await call_local_llm(messages, temperature, max_tokens)
+        answer, metrics = await call_local_llm(messages, temperature, max_tokens)
         if not answer or not answer.strip():
             print(f"⚠️ [LLM] Локальная не ответила — фолбэк на Polza")
-            answer = await call_polza_llm(messages, temperature, max_tokens)
-        return answer
+            answer, metrics = await call_polza_llm(messages, temperature, max_tokens)
+            metrics["model"] = "polza (fallback)"
+        return answer, metrics
     else:
         return await call_polza_llm(messages, temperature, max_tokens)
 
@@ -1512,15 +1615,14 @@ async def local_fallback(payload_text: str, user_id: str,
     print(f"📨 [MSG] Всего turns в messages: {len(messages)}")
 
     # 7. Вызов LLM
-    answer = await call_llm(messages, temperature=0.7, max_tokens=2000)
-
-    # === 3 уровня fallback ===
+   
+    answer, metrics = await call_llm(messages, temperature=0.7, max_tokens=2000)
 
     if not answer or not answer.strip():
         print("🔁 [LLM] Пусто — пробуем с сокращённым промптом")
         short_prompt = prompt[:6000]
         msgs2 = list(messages[:-1]) + [{"role": "user", "content": short_prompt}]
-        answer = await call_llm(msgs2, temperature=0.7, max_tokens=1500)
+        answer, metrics = await call_llm(msgs2, temperature=0.7, max_tokens=1500)
 
     if not answer or not answer.strip():
         print("🔁 [LLM] Пусто — пробуем без БЗ")
@@ -1533,7 +1635,7 @@ async def local_fallback(payload_text: str, user_id: str,
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": min_prompt},
         ]
-        answer = await call_llm(msgs3, temperature=0.7, max_tokens=1200)
+        answer, metrics = await call_llm(msgs3, temperature=0.7, max_tokens=1200)
 
     print(f"✅ [FALLBACK] Ответ получен: {len(answer) if answer else 0} символов")
 
@@ -1543,12 +1645,13 @@ async def local_fallback(payload_text: str, user_id: str,
         except Exception as e:
             print(f"⚠️ [FALLBACK] Не удалось сохранить в историю: {e}")
 
-    return answer
+    return answer, metrics   # ← было просто answer
 
 
 # ==========================================
 # 🧵 ФОНОВАЯ ОБРАБОТКА СООБЩЕНИЙ TELEGRAM
 # ==========================================
+
 async def process_and_reply(chat_id: int, user_id: str, text: str,
                             is_channel: bool = False, reply_to_message_id: int = None,
                             post_link: str = None, is_group: bool = False):
@@ -1637,10 +1740,11 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
             or response_text.startswith("Извините, произошла ошибка")
             or response_text.startswith("Извините, я не смог сформулировать")
         )
+      
         if is_yandex_failed:
             print("🚑 [BG] Yandex недоступен — переключаюсь на локальный fallback")
             try:
-                response_text = await local_fallback(
+                response_text, metrics = await local_fallback(
                     payload_text, user_id,
                     platform="Telegram",
                     is_channel=is_channel,
@@ -1649,11 +1753,13 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
                 print(f"❌ [BG] Fallback тоже упал: {e}")
                 traceback.print_exc()
                 response_text = ""
+                metrics = {}
 
         if not response_text or not response_text.strip():
             print("⚠️ [BG] Пустой ответ — в чат не отправляем")
             return
 
+      
         if is_channel and post_link:
             final_text = (
                 f"@Feon_ai_bot говорит:\n\n"
@@ -1663,6 +1769,18 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
             )
         else:
             final_text = response_text
+
+        # 📊 Футер с метриками (можно выключить через SHOW_METRICS=false)
+        if SHOW_METRICS and metrics:
+            footer = _fmt_metrics(metrics)
+            if footer:
+                final_text += f"\n\n━━━━━━━━━━━━━━━━\n{footer}"
+
+        await send_telegram_message(
+            chat_id,
+            final_text,
+            reply_to_message_id=reply_to_message_id if is_channel else None,
+        )
 
         await send_telegram_message(
             chat_id,
