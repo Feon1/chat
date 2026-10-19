@@ -1555,14 +1555,14 @@ async def local_fallback(payload_text: str, user_id: str,
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
    
     for msg in history_for_messages:
-    role = msg.get("role")
-    if role not in ("user", "assistant", "bot"):
-        continue
-    if role == "bot":
-        role = "assistant"
-    content = (msg.get("content") or "").strip()
-    if content:
-        messages.append({"role": role, "content": content})
+        role = msg.get("role")
+        if role not in ("user", "assistant", "bot"):
+            continue
+        if role == "bot":
+            role = "assistant"
+        content = (msg.get("content") or "").strip()
+        if content:
+            messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
 
     answer, metrics = await call_llm(messages, temperature=0.7, max_tokens=2000)
