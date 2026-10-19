@@ -11,3 +11,5 @@ EXPOSE 10000
 
 CMD ["python", "server.py"]
 RUN apt-get update && apt-get install -y ca-certificates && update-ca-certificates
+
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
