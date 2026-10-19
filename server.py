@@ -1877,19 +1877,15 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
                 f"[Содержимое страницы загрузить не удалось. Ответь по общим знаниям.]"
             )
 
-        print(f"📤 [BG] Payload для Yandex: {len(payload_text)} симв. Начало: {payload_text[:120]!r}")
+       
+        print(f"📤 [BG] Payload: {len(payload_text)} симв. Начало: {payload_text[:120]!r}")
 
-        response_text = await call_yandex_function(payload_text, user_id)
-        print(f"🧵 [BG] Ответ Yandex: {response_text[:120]}...")
+        current_model = get_current_model()
+        print(f"🎛️ [BG] Выбранная модель: {current_model}")
 
-        is_yandex_failed = (
-            not response_text
-            or response_text.startswith("❌")
-            or response_text.startswith("Извините, произошла ошибка")
-            or response_text.startswith("Извините, я не смог сформулировать")
-        )
-        if is_yandex_failed:
-            print("🚑 [BG] Yandex недоступен — переключаюсь на локальный fallback")
+        if current_model == "local":
+            # Пользователь выбрал локальную — Yandex пропускаем сразу
+            print("🖥️ [BG] Локальная модель — Yandex пропускаем, идём в local_fallback")
             try:
                 response_text, _ = await local_fallback(
                     payload_text, user_id,
@@ -1897,9 +1893,32 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
                     is_channel=is_channel,
                 )
             except Exception as e:
-                print(f"❌ [BG] Fallback тоже упал: {e}")
+                print(f"❌ [BG] local_fallback упал: {e}")
                 traceback.print_exc()
                 response_text = ""
+        else:
+            # polza: Yandex first, потом fallback на Polza
+            response_text = await call_yandex_function(payload_text, user_id)
+            print(f"🧵 [BG] Ответ Yandex: {response_text[:120]}...")
+
+            is_yandex_failed = (
+                not response_text
+                or response_text.startswith("❌")
+                or response_text.startswith("Извините, произошла ошибка")
+                or response_text.startswith("Извините, я не смог сформулировать")
+            )
+            if is_yandex_failed:
+                print("🚑 [BG] Yandex недоступен — переключаюсь на локальный fallback")
+                try:
+                    response_text, _ = await local_fallback(
+                        payload_text, user_id,
+                        platform="Telegram",
+                        is_channel=is_channel,
+                    )
+                except Exception as e:
+                    print(f"❌ [BG] Fallback тоже упал: {e}")
+                    traceback.print_exc()
+                    response_text = ""
 
         if not response_text or not response_text.strip():
             print("⚠️ [BG] Пустой ответ — в чат не отправляем")
