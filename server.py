@@ -19,6 +19,8 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from bs4 import BeautifulSoup
 import time
+import shutil
+import subprocess
 
 
 try:
@@ -1159,7 +1161,51 @@ def _extract_answer_from_yandex(raw: str) -> str:
 # ==========================================
 
 async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500):
-    """Возвращает (content, metrics)."""
+async def _call_local_via_curl(messages: list, temperature: float, max_tokens: int):
+    """Прямой вызов через системный curl — точно как proxy.py. Гарантирует HTTP/1.1 + TLS 1.2 + IPv4."""
+    if not shutil.which("curl"):
+        raise RuntimeError("curl не установлен в контейнере")
+
+    base_url = LOCAL_LLM_BASE_URL.rstrip("/")
+    url = f"{base_url}/chat/completions"
+
+    body = json.dumps({
+        "model": LOCAL_LLM_MODEL,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }, ensure_ascii=False)
+
+    cmd = [
+        "curl", "-4", "-k", "-s", "-N",
+        "--http1.1", "--tlsv1.2",
+        "--connect-timeout", "15",
+        "-m", "180",
+        "-X", "POST", url,
+        "-H", "Content-Type: application/json",
+        "-H", f"Authorization: Bearer {LOCAL_LLM_API_KEY}",
+        "-d", body,
+    ]
+
+    def _run():
+        return subprocess.run(
+            cmd, capture_output=True, text=True, timeout=180,
+            encoding="utf-8", errors="ignore",
+        )
+
+    result = await asyncio.to_thread(_run)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"curl exit {result.returncode}: {result.stderr[:200]}")
+
+    if not result.stdout.strip():
+        raise RuntimeError("curl: empty response")
+
+    return json.loads(result.stdout)
+
+
+async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500):
+    """Локальная модель через Tailscale Funnel: httpx ×5 + curl-fallback."""
     prompt_chars = sum(len(m.get("content", "")) for m in messages)
     print(f"🖥️ [LOCAL-LLM] Отправка на {LOCAL_LLM_BASE_URL}, model={LOCAL_LLM_MODEL}")
     print(f"📥 [LOCAL-LLM] Вход: {len(messages)} turns, {prompt_chars} симв. (~{prompt_chars // 2} токенов)")
@@ -1167,58 +1213,105 @@ async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: i
     t0 = time.time()
     metrics = {"model": "local", "prompt_chars": prompt_chars}
 
-    async with httpx.AsyncClient(
-        timeout=httpx.Timeout(180.0, connect=60.0, write=30.0, pool=30.0),
-    ) as client:
+    base_url = LOCAL_LLM_BASE_URL.rstrip("/")
+    url = f"{base_url}/chat/completions"
+
+    json_body = {
+        "model": LOCAL_LLM_MODEL,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    # === Этап 1: httpx с retry ×5 (2с пауза) ===
+    last_error = None
+    for attempt in range(1, 6):
         try:
-            r = await client.post(
-                f"{LOCAL_LLM_BASE_URL}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {LOCAL_LLM_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": LOCAL_LLM_MODEL,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                },
-            )
-            r.raise_for_status()
-            elapsed = time.time() - t0
-            data = r.json()
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(180.0, connect=15.0, write=30.0, pool=30.0),
+                verify=False,
+                http2=False,
+            ) as client:
+                r = await client.post(
+                    url,
+                    headers={
+                        "Authorization": f"Bearer {LOCAL_LLM_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json=json_body,
+                )
+                r.raise_for_status()
+                elapsed = time.time() - t0
+                data = r.json()
 
-            usage = data.get("usage") or {}
-            if usage:
-                metrics["prompt_tokens"] = usage.get("prompt_tokens")
-                metrics["completion_tokens"] = usage.get("completion_tokens")
-                metrics["total_tokens"] = usage.get("total_tokens")
-                print(f"🔍 [LOCAL-LLM] usage={usage}")
+                usage = data.get("usage") or {}
+                if usage:
+                    metrics["prompt_tokens"] = usage.get("prompt_tokens")
+                    metrics["completion_tokens"] = usage.get("completion_tokens")
+                    metrics["total_tokens"] = usage.get("total_tokens")
+                    print(f"🔍 [LOCAL-LLM] usage={usage}")
 
-            if data.get("choices"):
-                ch = data["choices"][0]
-                content = ch.get("message", {}).get("content") or ""
-                finish = ch.get("finish_reason")
-                speed = len(content) / elapsed if elapsed > 0 else 0
+                if data.get("choices"):
+                    ch = data["choices"][0]
+                    content = ch.get("message", {}).get("content") or ""
+                    finish = ch.get("finish_reason")
+                    speed = len(content) / elapsed if elapsed > 0 else 0
 
-                metrics["elapsed"] = elapsed
-                metrics["speed"] = speed
-                metrics["finish"] = finish
-                metrics["answer_chars"] = len(content)
+                    metrics["elapsed"] = elapsed
+                    metrics["speed"] = speed
+                    metrics["finish"] = finish
+                    metrics["answer_chars"] = len(content)
 
-                print(f"✅ [LOCAL-LLM] Ответ: {len(content)} симв. за {elapsed:.2f}с "
-                      f"({speed:.1f} симв/с), finish={finish}")
-                return content, metrics
+                    print(f"✅ [LOCAL-LLM] Ответ: {len(content)} симв. за {elapsed:.2f}с "
+                          f"({speed:.1f} симв/с), finish={finish} (httpx попытка {attempt}/5)")
+                    return content, metrics
 
-            print(f"⚠️ [LOCAL-LLM] Нет choices: {json.dumps(data, ensure_ascii=False)[:300]}")
-            metrics["error"] = "no_choices"
-            return "", metrics
+                print(f"⚠️ [LOCAL-LLM] Нет choices (httpx попытка {attempt}/5)")
+                metrics["error"] = "no_choices"
+                return "", metrics
+
         except Exception as e:
-            elapsed = time.time() - t0
-            print(f"❌ [LOCAL-LLM] Ошибка через {elapsed:.2f}с: {type(e).__name__}: {e}")
-            traceback.print_exc()
-            metrics["error"] = type(e).__name__
-            return "", metrics
+            last_error = e
+            print(f"⚠️ [LOCAL-LLM] httpx попытка {attempt}/5: {type(e).__name__}: {str(e)[:100]}")
+            if attempt < 5:
+                await asyncio.sleep(2)
+
+    # === Этап 2: fallback на curl (как proxy.py) ===
+    print(f"🔄 [LOCAL-LLM] httpx не справился — пробуем curl (как proxy.py)")
+    try:
+        data = await _call_local_via_curl(messages, temperature, max_tokens)
+        elapsed = time.time() - t0
+
+        usage = data.get("usage") or {}
+        if usage:
+            metrics["prompt_tokens"] = usage.get("prompt_tokens")
+            metrics["completion_tokens"] = usage.get("completion_tokens")
+            metrics["total_tokens"] = usage.get("total_tokens")
+            print(f"🔍 [LOCAL-LLM] usage={usage}")
+
+        if data.get("choices"):
+            ch = data["choices"][0]
+            content = ch.get("message", {}).get("content") or ""
+            finish = ch.get("finish_reason")
+            speed = len(content) / elapsed if elapsed > 0 else 0
+
+            metrics["elapsed"] = elapsed
+            metrics["speed"] = speed
+            metrics["finish"] = finish
+            metrics["answer_chars"] = len(content)
+
+            print(f"✅ [LOCAL-LLM] Ответ через curl: {len(content)} симв. за {elapsed:.2f}с "
+                  f"({speed:.1f} симв/с), finish={finish}")
+            return content, metrics
+
+        metrics["error"] = "curl_no_choices"
+        return "", metrics
+
+    except Exception as e:
+        elapsed = time.time() - t0
+        print(f"❌ [LOCAL-LLM] curl тоже упал за {elapsed:.1f}с: {type(e).__name__}: {str(e)[:150]}")
+        metrics["error"] = type(e).__name__
+        return "", metrics
 
 
 async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000):
