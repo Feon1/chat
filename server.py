@@ -1160,7 +1160,7 @@ def _extract_answer_from_yandex(raw: str) -> str:
 # 🚑 LOCAL + POLZA (возвращают (content, metrics))
 # ==========================================
 
-async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500):
+
 async def _call_local_via_curl(messages: list, temperature: float, max_tokens: int):
     """Прямой вызов через системный curl — точно как proxy.py. Гарантирует HTTP/1.1 + TLS 1.2 + IPv4."""
     if not shutil.which("curl"):
