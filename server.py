@@ -2211,13 +2211,29 @@ async def upload_document(file: UploadFile = File(...)):
                 payload={"text": chunk, "source_file": file.filename},
             ))
 
+      
         if points:
-            await asyncio.to_thread(
-                qdrant.upsert,
-                collection_name=COLLECTION_NAME,
-                points=points,
-                wait=True,
-            )
+    # Qdrant лимит ~32 МБ на один upsert.
+    # 1 точка = 1536 floats × 8 байт ≈ 12 КБ + текст.
+    # Батч по 100 — ~1.5 МБ, безопасно.
+            UPSERT_BATCH = 100
+            saved = 0
+            for start in range(0, len(points), UPSERT_BATCH):
+                chunk = points[start:start + UPSERT_BATCH]
+                try:
+                    await asyncio.to_thread(
+                        qdrant.upsert,
+                        collection_name=COLLECTION_NAME,
+                        points=chunk,
+                        wait=True,
+                    )
+                    saved += len(chunk)
+                    print(f"💾 [UPLOAD] {saved}/{len(points)} точек сохранено")
+                except Exception as e:
+                    print(f"❌ [UPLOAD] Батч {start}-{start+len(chunk)} упал: {e}")
+            # Продолжаем со следующим — часть данных лучше, чем ничего
+
+        print(f"✅ [UPLOAD] Итого сохранено {saved} из {len(points)}")
 
         return JSONResponse({
             "status": "success",
