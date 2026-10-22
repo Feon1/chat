@@ -938,9 +938,13 @@ async def search_knowledge_max(query: str) -> str:
     if not POLZA_EMBEDDING_API_KEY:
         return ""
 
+  
     priority_result = await search_priority(query)
     if priority_result:
         print(f"📄 [RAG] Приоритетный: {len(priority_result)} символов")
+        if len(priority_result) > 8000:
+            priority_result = priority_result[:8000] + "\n\n[Контекст сокращён]"
+            print(f"✂️ [RAG] Приоритетный обрезан до 8000")
         return priority_result
 
     try:
