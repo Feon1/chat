@@ -19,8 +19,6 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from bs4 import BeautifulSoup
 import time
-import shutil
-import subprocess
 
 
 try:
@@ -68,7 +66,6 @@ if not TELEGRAM_TOKEN:
 
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-JINA_API_KEY = os.getenv("JINA_API_KEY")
 POLZA_API_KEY = os.getenv("POLZA_API_KEY")
 
 KNOWLEDGE_MAX_COLLECTION = "xiaozhi_knowledge_max"
@@ -85,7 +82,6 @@ LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL")
 
 if not LOCAL_LLM_BASE_URL or not LOCAL_LLM_API_KEY:
     print("⚠️ Локальная модель не настроена: нет LOCAL_LLM_BASE_URL или LOCAL_LLM_API_KEY")
-    print("   Команда /model_local будет недоступна")
 
 SETTINGS_COLLECTION = "app_settings"
 
@@ -100,62 +96,82 @@ qdrant = QdrantClient(
     api_key=QDRANT_API_KEY,
     timeout=30,
 )
-_current_model = "polza"
-_SETTINGS_MODEL_ID = "11111111-1111-1111-1111-111111111111"
+
+# ==========================================
+# МОДЕЛИ: per-user выбор
+# ==========================================
+# Дефолт = polza. Каждый пользователь выбирает свою модель независимо.
+# Возможные значения: "polza" | "local" | "yandex"
+_DEFAULT_MODEL = "polza"
+
+_USER_MODELS: dict[str, str] = {}
+
 _SETTINGS_PROMPT_ID = "22222222-2222-2222-2222-222222222222"
 
 
-def get_current_model() -> str:
-    return _current_model
+def _model_point_id(user_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"model_{user_id}"))
+
+
+def get_current_model(user_id: str | None = None) -> str:
+    if not user_id:
+        return _DEFAULT_MODEL
+    return _USER_MODELS.get(user_id, _DEFAULT_MODEL)
 
 
 def _model_display_name(model: str) -> str:
     if model == "polza":
-        return "DeepSeek V4 Flash"
+        return "Polza (DeepSeek V4 Flash)"
     if model == "local":
         return f"Локальная ({LOCAL_LLM_MODEL or 'Qwen'})"
+    if model == "yandex":
+        return "Yandex Cloud (Feon)"
     return model
 
 
-async def load_current_model():
-    global _current_model
+async def load_user_model(user_id: str):
+    """Читает модель пользователя из Qdrant (кэширует)."""
+    if user_id in _USER_MODELS:
+        return
     try:
         records = await asyncio.to_thread(
             qdrant.retrieve,
             collection_name=SETTINGS_COLLECTION,
-            ids=[_SETTINGS_MODEL_ID],
+            ids=[_model_point_id(user_id)],
             with_payload=True,
         )
         if records and records[0].payload:
-            val = records[0].payload.get("value", "polza")
-            if val in ("polza", "local"):
-                _current_model = val
-                print(f"✅ Модель из Qdrant: {_current_model}")
+            val = records[0].payload.get("value", "")
+            if val in ("polza", "local", "yandex"):
+                _USER_MODELS[user_id] = val
+                print(f"✅ Модель {user_id}: {val}")
                 return
-        print(f"ℹ️ В Qdrant нет настроек, используем 'polza'")
+        _USER_MODELS[user_id] = _DEFAULT_MODEL
+        print(f"ℹ️ Модель {user_id}: дефолт ({_DEFAULT_MODEL})")
     except Exception as e:
-        print(f"ℹ️ Не удалось прочитать настройки из Qdrant: {e}")
+        print(f"⚠️ Не удалось прочитать модель {user_id}: {e}")
+        _USER_MODELS[user_id] = _DEFAULT_MODEL
 
 
-async def save_current_model(model: str):
-    global _current_model
-    if model not in ("polza", "local"):
+async def save_current_model(model: str, user_id: str):
+    """Сохраняет выбор модели для конкретного пользователя."""
+    if model not in ("polza", "local", "yandex"):
         raise ValueError(f"Неизвестная модель: {model}")
-    _current_model = model
+    _USER_MODELS[user_id] = model
     try:
         await asyncio.to_thread(
             qdrant.upsert,
             collection_name=SETTINGS_COLLECTION,
             points=[models.PointStruct(
-                id=_SETTINGS_MODEL_ID,
+                id=_model_point_id(user_id),
                 vector=[1.0],
-                payload={"key": "current_model", "value": model}
+                payload={"key": f"model_{user_id}", "value": model}
             )],
             wait=True,
         )
-        print(f"✅ Модель сохранена в Qdrant: {model}")
+        print(f"✅ Модель сохранена: {user_id} → {model}")
     except Exception as e:
-        print(f"⚠️ Не удалось сохранить модель в Qdrant: {e}")
+        print(f"⚠️ Не удалось сохранить модель {user_id}: {e}")
 
 
 # ==========================================
@@ -230,7 +246,6 @@ _ssl_context = ssl.create_default_context(cafile=certifi.where())
 
 RENDER_LINK_MARKER = "[RENDER_LINK]"
 
-# === Приоритетный поиск ===
 PRIORITY_KEYWORDS = [
     "голем", "обитель", "левиафан",
     "феон", "обители", "голема", "левиафана",
@@ -571,22 +586,19 @@ def extract_text_from_rich_message(rich: dict) -> str:
 
 
 # ==========================================
-# ИНИЦИАЛИЗАЦИЯ ПРИ СТАРТЕ
+# ИНИЦИАЛИЗАЦИЯ
 # ==========================================
 @app.on_event("startup")
 async def startup_event():
     try:
         info = qdrant.get_collection(COLLECTION_NAME)
-        size = info.config.params.vectors.size
-        print(f"✅ Коллекция '{COLLECTION_NAME}' найдена (dim={size})")
-        if size != 1536:
-            print(f"⚠️ ВНИМАНИЕ: размерность {size} не совпадает с ожидаемой 1536!")
+        print(f"✅ Коллекция '{COLLECTION_NAME}' найдена (dim={info.config.params.vectors.size})")
     except Exception:
         qdrant.create_collection(
             collection_name=COLLECTION_NAME,
             vectors_config=models.VectorParams(size=1536, distance=models.Distance.COSINE),
         )
-        print(f"✅ Коллекция '{COLLECTION_NAME}' создана (dim=1536)")
+        print(f"✅ Коллекция '{COLLECTION_NAME}' создана")
 
     try:
         qdrant.get_collection(HISTORY_COLLECTION)
@@ -608,12 +620,11 @@ async def startup_event():
         )
         print(f"✅ Коллекция '{SETTINGS_COLLECTION}' создана")
 
-    indices = [
+    for field_name, field_schema in [
         ("user_id", models.PayloadSchemaType.KEYWORD),
         ("role", models.PayloadSchemaType.KEYWORD),
         ("message_hash", models.PayloadSchemaType.KEYWORD),
-    ]
-    for field_name, field_schema in indices:
+    ]:
         try:
             qdrant.create_payload_index(
                 collection_name=HISTORY_COLLECTION,
@@ -622,7 +633,7 @@ async def startup_event():
             )
             print(f"✅ Индекс '{field_name}' создан")
         except Exception:
-            print(f"ℹ️ Индекс '{field_name}' уже есть")
+            pass
 
     try:
         qdrant.create_payload_index(
@@ -630,9 +641,8 @@ async def startup_event():
             field_name="text",
             field_schema=models.PayloadSchemaType.TEXT,
         )
-        print("✅ Индекс на 'text' создан/проверен")
     except Exception as e:
-        print(f"ℹ️ Индекс на 'text': {e}")
+        print(f"ℹ️ Индекс 'text': {e}")
 
     global BOT_ID, BOT_USERNAME
     if TELEGRAM_BOT_TOKEN:
@@ -650,24 +660,19 @@ async def startup_event():
             BOT_ID = None
 
     if TELEGRAM_BOT_TOKEN and WEBHOOK_URL:
-        import json as _json
         allowed = ["message", "channel_post", "edited_message", "edited_channel_post"]
-
         set_webhook_url = (
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setWebhook"
             f"?url={WEBHOOK_URL}"
-            f"&allowed_updates={_json.dumps(allowed)}"
+            f"&allowed_updates={json.dumps(allowed)}"
             f"&drop_pending_updates=true"
         )
-
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(set_webhook_url)
-                print(f"✅ Telegram Webhook установлен: {response.json()}")
+                print(f"✅ Webhook установлен: {response.json()}")
             except Exception as e:
                 print(f"❌ Ошибка установки Webhook: {e}")
-    else:
-        print("⚠️ TELEGRAM_BOT_TOKEN или WEBHOOK_URL не найдены")
 
     if TELEGRAM_BOT_TOKEN:
         commands = [
@@ -685,7 +690,6 @@ async def startup_event():
                     json={"commands": commands}
                 )
                 print(f"✅ Команды зарегистрированы: {r.json().get('ok')}")
-
                 r2 = await client.post(
                     f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setChatMenuButton",
                     json={"menu_button": {"type": "commands"}}
@@ -694,16 +698,15 @@ async def startup_event():
         except Exception as e:
             print(f"⚠️ Не удалось установить меню: {e}")
 
-    await load_current_model()
     await load_system_prompt()
+    print(f"🎛️ Дефолтная модель: {_DEFAULT_MODEL}")
 
 
 # ==========================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ВСПОМОГАТЕЛЬНЫЕ
 # ==========================================
 
 async def get_embedding(text: str) -> list[float]:
-    """Эмбеддинг через Polza (dim=1536) — с retry ×3."""
     if not POLZA_EMBEDDING_API_KEY:
         raise ValueError("POLZA_EMBEDDING_API_KEY не задан")
 
@@ -738,12 +741,10 @@ async def get_embedding(text: str) -> list[float]:
             print(f"❌ [EMBED] без retry: {type(e).__name__}: {e}")
             raise
 
-    print(f"❌ [EMBED] все 3 попытки провалились: {last_error}")
     raise last_error
 
 
 async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list:
-    """Батч-эмбеддинги через Polza: N текстов за один HTTP-запрос."""
     if not POLZA_EMBEDDING_API_KEY:
         raise ValueError("POLZA_EMBEDDING_API_KEY не задан")
 
@@ -764,7 +765,6 @@ async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list:
         payload_texts = [texts[i] for i in indices]
         data = {"model": "text-embedding-3-small", "input": payload_texts}
 
-        last_err = None
         for attempt in range(1, 4):
             try:
                 async with httpx.AsyncClient(
@@ -776,19 +776,15 @@ async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list:
                     resp.raise_for_status()
                     body = resp.json()
                     items = body.get("data") or []
-                    if len(items) != len(indices):
-                        print(f"⚠️ [EMBED-BATCH] Ожидали {len(indices)}, получили {len(items)}")
                     for item in items:
                         local_idx = item.get("index", 0)
                         if 0 <= local_idx < len(indices):
                             results[indices[local_idx]] = item["embedding"]
                     return
             except Exception as e:
-                last_err = e
                 print(f"⚠️ [EMBED-BATCH] попытка {attempt}/3: {type(e).__name__}: {e}")
                 if attempt < 3:
                     await asyncio.sleep(1.5 * attempt)
-        print(f"❌ [EMBED-BATCH] батч провалился: {last_err}")
 
     batches = [
         list(range(i, min(i + batch_size, total)))
@@ -803,10 +799,8 @@ async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list:
 
     t0 = time.time()
     await asyncio.gather(*[_limited(b) for b in batches])
-    elapsed = time.time() - t0
-
     got = sum(1 for r in results if r is not None)
-    print(f"✅ [EMBED-BATCH] Готово: {got}/{total} за {elapsed:.2f}с (батчей: {len(batches)})")
+    print(f"✅ [EMBED-BATCH] Готово: {got}/{total} за {time.time() - t0:.2f}с")
 
     return results
 
@@ -820,11 +814,10 @@ _JUNK_RE = re.compile(
 def _is_junk_query(query: str) -> bool:
     q_stripped = query.strip()
     if len(q_stripped) < 6:
-        print(f"⏭️ [SEARCH] Запрос короткий ({len(q_stripped)} симв.) — БЗ не ищем")
+        print(f"⏭️ [SEARCH] Запрос короткий ({len(q_stripped)} симв.)")
         return True
-
     if len(query) < 40 and _JUNK_RE.search(query):
-        print(f"⏭️ [SEARCH] Похоже на тест — БЗ не ищем")
+        print(f"⏭️ [SEARCH] Похоже на тест")
         return True
     return False
 
@@ -834,7 +827,7 @@ async def search_priority(query: str) -> str:
     for kw in PRIORITY_KEYWORDS:
         if kw not in q_lower:
             continue
-        print(f"🎯 [SEARCH] Приоритетный поиск по ключу: {kw}")
+        print(f"🎯 [SEARCH] Приоритетный поиск: {kw}")
         try:
             records, _ = await asyncio.to_thread(
                 qdrant.scroll,
@@ -849,7 +842,6 @@ async def search_priority(query: str) -> str:
                 with_payload=True,
             )
             ids = [r.id for r in records]
-            print(f"📦 [SEARCH] Кандидатов с '{kw}': {len(ids)}")
             if not ids:
                 return ""
 
@@ -880,33 +872,17 @@ async def search_priority(query: str) -> str:
                 )
 
             if not ranked:
-                print(f"⚠️ [SEARCH] Ранжирование пустое")
                 return ""
 
-            priority = [
-                r for r in ranked
-                if r.payload and r.payload.get("source_file") in PRIORITY_SOURCES
-            ]
-            others = [
-                r for r in ranked
-                if r.payload and r.payload.get("source_file") not in PRIORITY_SOURCES
-            ]
+            priority = [r for r in ranked if r.payload and r.payload.get("source_file") in PRIORITY_SOURCES]
+            others = [r for r in ranked if r.payload and r.payload.get("source_file") not in PRIORITY_SOURCES]
             priority.sort(key=lambda r: getattr(r, "score", 0), reverse=True)
             others.sort(key=lambda r: getattr(r, "score", 0), reverse=True)
             mixed = priority[:5] + others[:2]
 
-            print(f"📊 [SEARCH] Приоритет: {len(priority[:5])} своих + {len(others[:2])} чужих")
-            for i, r in enumerate(mixed, 1):
-                src = r.payload.get("source_file", "?") if r.payload else "?"
-                score = getattr(r, "score", 0)
-                print(f"   #{i} [score={score:.3f}] {src}")
-
-            return "\n\n".join(
-                r.payload.get("text", "") for r in mixed if r.payload
-            )
+            return "\n\n".join(r.payload.get("text", "") for r in mixed if r.payload)
         except Exception as e:
-            print(f"⚠️ [SEARCH] Ошибка приоритетного поиска: {e}")
-            traceback.print_exc()
+            print(f"⚠️ [SEARCH] Ошибка: {e}")
             return ""
     return ""
 
@@ -914,9 +890,7 @@ async def search_priority(query: str) -> str:
 async def search_knowledge(query: str) -> str:
     if _is_junk_query(query):
         return ""
-
     if not POLZA_EMBEDDING_API_KEY:
-        print("⚠️ [SEARCH] Нет POLZA_EMBEDDING_API_KEY")
         return ""
 
     try:
@@ -952,30 +926,26 @@ async def search_knowledge(query: str) -> str:
         return "\n\n".join([hit.payload.get("text", "") for hit in search_result if hit.payload])
     except Exception as e:
         print(f"⚠️ Ошибка поиска: {e}")
-        traceback.print_exc()
         return ""
 
 
 async def search_knowledge_max(query: str) -> str:
     if _is_junk_query(query):
         return ""
-
     if not POLZA_EMBEDDING_API_KEY:
-        print("⚠️ [FALLBACK-RAG] Нет POLZA_EMBEDDING_API_KEY")
         return ""
 
     priority_result = await search_priority(query)
     if priority_result:
-        print(f"📄 [FALLBACK-RAG] Приоритетный результат: {len(priority_result)} символов")
+        print(f"📄 [RAG] Приоритетный: {len(priority_result)} символов")
         return priority_result
 
     try:
         vec = await get_embedding(query)
     except Exception as e:
-        print(f"⚠️ [FALLBACK-RAG] Эмбеддинг упал: {type(e).__name__}: {e}")
+        print(f"⚠️ [RAG] Эмбеддинг упал: {e}")
         return ""
 
-    points = []
     try:
         if hasattr(qdrant, "query_points"):
             result = await asyncio.to_thread(
@@ -997,23 +967,21 @@ async def search_knowledge_max(query: str) -> str:
                 score_threshold=0.50,
             )
     except Exception as e:
-        print(f"⚠️ [FALLBACK-RAG] Qdrant упал: {type(e).__name__}: {e}")
-        traceback.print_exc()
+        print(f"⚠️ [RAG] Qdrant упал: {e}")
         return ""
 
     if not points:
-        print("⏭️ [FALLBACK-RAG] Ничего не найдено")
+        print("⏭️ [RAG] Ничего не найдено")
         return ""
 
-    print(f"✅ [FALLBACK-RAG] Найдено {len(points)} чанков "
+    print(f"✅ [RAG] Найдено {len(points)} чанков "
           f"(score: {points[0].score:.2f}..{points[-1].score:.2f})")
 
-    result = "\n\n".join([p.payload.get("text", "") for p in points if p.payload])
+    result = "\n\n".join(p.payload.get("text", "") for p in points if p.payload)
 
-    MAX_CONTEXT_CHARS = 8000
-    if len(result) > MAX_CONTEXT_CHARS:
-        result = result[:MAX_CONTEXT_CHARS] + "\n\n[Контекст сокращён]"
-        print(f"✂️ [FALLBACK-RAG] Контекст обрезан до {MAX_CONTEXT_CHARS} символов")
+    if len(result) > 8000:
+        result = result[:8000] + "\n\n[Контекст сокращён]"
+        print(f"✂️ [RAG] Контекст обрезан до 8000")
 
     return result
 
@@ -1046,7 +1014,6 @@ async def save_to_history(user_id: str, role: str, content: str):
         )
 
         if existing:
-            print(f"⚠️ Пропускаем дубликат: {normalized_content[:30]}...")
             return
 
         timestamp = datetime.utcnow().isoformat()
@@ -1072,7 +1039,6 @@ async def save_to_history(user_id: str, role: str, content: str):
 
     except Exception as e:
         print(f"⚠️ Ошибка сохранения истории: {e}")
-        traceback.print_exc()
 
 
 async def get_history(user_id: str, limit: int = 50) -> list[dict]:
@@ -1086,44 +1052,52 @@ async def get_history(user_id: str, limit: int = 50) -> list[dict]:
             limit=limit,
             with_payload=True,
         )
-        messages = sorted(
+        return sorted(
             [r.payload for r in records if r.payload],
             key=lambda x: x.get("timestamp", ""),
         )
-        return messages
     except Exception as e:
         print(f"⚠️ Ошибка получения истории: {e}")
         return []
 
 
 # ==========================================
-# 📡 YANDEX
+# YANDEX
 # ==========================================
-async def call_yandex_function(message_text: str, user_id: str) -> str:
+async def call_yandex_function(message_text: str, user_id: str):
+    """Возвращает (answer, metrics)."""
     payload = {"message": message_text, "user_id": user_id, "platform": "Telegram"}
     headers = {"Content-Type": "application/json"}
 
-    print(f"📡 Отправляем в Yandex: message='{message_text[:80]}...', user_id={user_id}")
+    print(f"📡 [YANDEX] Отправка: '{message_text[:80]}...', user_id={user_id}")
+
+    t0 = time.time()
+    metrics = {"model": "yandex"}
 
     try:
         timeout = aiohttp.ClientTimeout(total=15, connect=10)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(YANDEX_FUNCTION_URL, json=payload, headers=headers) as resp:
                 raw = await resp.text()
-                print(f"📥 Ответ Yandex (HTTP {resp.status}): {raw[:300]}")
+                elapsed = time.time() - t0
+                print(f"📥 [YANDEX] HTTP {resp.status}: {raw[:300]}")
+
                 if resp.status != 200:
-                    return f"❌ Yandex вернул ошибку HTTP {resp.status}. Попробуйте позже."
+                    metrics["error"] = f"HTTP {resp.status}"
+                    return f"❌ Yandex HTTP {resp.status}", metrics
+
                 answer = _extract_answer_from_yandex(raw)
                 if not answer:
-                    return "❌ Yandex вернул пустой ответ."
-                return answer
-    except aiohttp.ClientError as e:
-        print(f"❌ Сетевая ошибка при вызове Yandex: {e}")
-        return "❌ Не удалось связаться с Yandex Cloud."
+                    metrics["error"] = "empty"
+                    return "❌ Yandex пустой ответ", metrics
+
+                metrics["elapsed"] = elapsed
+                metrics["answer_chars"] = len(answer)
+                return answer, metrics
     except Exception as e:
-        print(f"❌ Неизвестная ошибка при вызове Yandex: {e}")
-        traceback.print_exc()
-        return "❌ Внутренняя ошибка при обращении к Yandex."
+        print(f"❌ [YANDEX] {type(e).__name__}: {e}")
+        metrics["error"] = type(e).__name__
+        return "❌ Yandex недоступен", metrics
 
 
 def _extract_answer_from_yandex(raw: str) -> str:
@@ -1156,65 +1130,28 @@ def _extract_answer_from_yandex(raw: str) -> str:
     return _dig(data)
 
 
+def _is_yandex_error(text: str) -> bool:
+    return (
+        not text
+        or not text.strip()
+        or text.startswith("❌")
+        or text.startswith("Извините, произошла ошибка")
+    )
+
+
 # ==========================================
-# 🚑 LOCAL + POLZA (возвращают (content, metrics))
+# LLM ВЫЗОВЫ
 # ==========================================
-
-
-async def _call_local_via_curl(messages: list, temperature: float, max_tokens: int):
-    """Прямой вызов через системный curl — точно как proxy.py. Гарантирует HTTP/1.1 + TLS 1.2 + IPv4."""
-    if not shutil.which("curl"):
-        raise RuntimeError("curl не установлен в контейнере")
-
-    base_url = LOCAL_LLM_BASE_URL.rstrip("/")
-    url = f"{base_url}/chat/completions"
-
-    body = json.dumps({
-        "model": LOCAL_LLM_MODEL,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }, ensure_ascii=False)
-
-    cmd = [
-        "curl", "-4", "-k", "-s", "-N",
-        "--http1.1", "--tlsv1.2",
-        "--connect-timeout", "15",
-        "-m", "180",
-        "-X", "POST", url,
-        "-H", "Content-Type: application/json",
-        "-H", f"Authorization: Bearer {LOCAL_LLM_API_KEY}",
-        "-d", body,
-    ]
-
-    def _run():
-        return subprocess.run(
-            cmd, capture_output=True, text=True, timeout=180,
-            encoding="utf-8", errors="ignore",
-        )
-
-    result = await asyncio.to_thread(_run)
-
-    if result.returncode != 0:
-        raise RuntimeError(f"curl exit {result.returncode}: {result.stderr[:200]}")
-
-    if not result.stdout.strip():
-        raise RuntimeError("curl: empty response")
-
-    return json.loads(result.stdout)
-
 
 async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: int = 500):
-    """Локальная модель через Tailscale Funnel: httpx ×5 + curl-fallback."""
     prompt_chars = sum(len(m.get("content", "")) for m in messages)
-    print(f"🖥️ [LOCAL-LLM] Отправка на {LOCAL_LLM_BASE_URL}, model={LOCAL_LLM_MODEL}")
-    print(f"📥 [LOCAL-LLM] Вход: {len(messages)} turns, {prompt_chars} симв. (~{prompt_chars // 2} токенов)")
+    print(f"🖥️ [LOCAL] {LOCAL_LLM_BASE_URL}, model={LOCAL_LLM_MODEL}")
+    print(f"📥 [LOCAL] Вход: {len(messages)} turns, {prompt_chars} симв.")
 
     t0 = time.time()
     metrics = {"model": "local", "prompt_chars": prompt_chars}
 
-    base_url = LOCAL_LLM_BASE_URL.rstrip("/")
-    url = f"{base_url}/chat/completions"
+    url = f"{LOCAL_LLM_BASE_URL.rstrip('/')}/chat/completions"
 
     json_body = {
         "model": LOCAL_LLM_MODEL,
@@ -1223,9 +1160,8 @@ async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: i
         "max_tokens": max_tokens,
     }
 
-    # === Этап 1: httpx с retry ×5 (2с пауза) ===
     last_error = None
-    for attempt in range(1, 6):
+    for attempt in range(1, 4):
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(180.0, connect=15.0, write=30.0, pool=30.0),
@@ -1249,7 +1185,6 @@ async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: i
                     metrics["prompt_tokens"] = usage.get("prompt_tokens")
                     metrics["completion_tokens"] = usage.get("completion_tokens")
                     metrics["total_tokens"] = usage.get("total_tokens")
-                    print(f"🔍 [LOCAL-LLM] usage={usage}")
 
                 if data.get("choices"):
                     ch = data["choices"][0]
@@ -1257,90 +1192,54 @@ async def call_local_llm(messages: list, temperature: float = 0.7, max_tokens: i
                     finish = ch.get("finish_reason")
                     speed = len(content) / elapsed if elapsed > 0 else 0
 
-                    metrics["elapsed"] = elapsed
-                    metrics["speed"] = speed
-                    metrics["finish"] = finish
-                    metrics["answer_chars"] = len(content)
+                    metrics.update({
+                        "elapsed": elapsed,
+                        "speed": speed,
+                        "finish": finish,
+                        "answer_chars": len(content),
+                    })
 
-                    print(f"✅ [LOCAL-LLM] Ответ: {len(content)} симв. за {elapsed:.2f}с "
-                          f"({speed:.1f} симв/с), finish={finish} (httpx попытка {attempt}/5)")
+                    print(f"✅ [LOCAL] {len(content)} симв. за {elapsed:.2f}с "
+                          f"({speed:.1f} симв/с), finish={finish}, попытка {attempt}/3")
                     return content, metrics
 
-                print(f"⚠️ [LOCAL-LLM] Нет choices (httpx попытка {attempt}/5)")
                 metrics["error"] = "no_choices"
                 return "", metrics
 
         except Exception as e:
             last_error = e
-            print(f"⚠️ [LOCAL-LLM] httpx попытка {attempt}/5: {type(e).__name__}: {str(e)[:100]}")
-            if attempt < 5:
+            print(f"⚠️ [LOCAL] попытка {attempt}/3: {type(e).__name__}: {str(e)[:100]}")
+            if attempt < 3:
                 await asyncio.sleep(2)
 
-    # === Этап 2: fallback на curl (как proxy.py) ===
-    print(f"🔄 [LOCAL-LLM] httpx не справился — пробуем curl (как proxy.py)")
-    try:
-        data = await _call_local_via_curl(messages, temperature, max_tokens)
-        elapsed = time.time() - t0
-
-        usage = data.get("usage") or {}
-        if usage:
-            metrics["prompt_tokens"] = usage.get("prompt_tokens")
-            metrics["completion_tokens"] = usage.get("completion_tokens")
-            metrics["total_tokens"] = usage.get("total_tokens")
-            print(f"🔍 [LOCAL-LLM] usage={usage}")
-
-        if data.get("choices"):
-            ch = data["choices"][0]
-            content = ch.get("message", {}).get("content") or ""
-            finish = ch.get("finish_reason")
-            speed = len(content) / elapsed if elapsed > 0 else 0
-
-            metrics["elapsed"] = elapsed
-            metrics["speed"] = speed
-            metrics["finish"] = finish
-            metrics["answer_chars"] = len(content)
-
-            print(f"✅ [LOCAL-LLM] Ответ через curl: {len(content)} симв. за {elapsed:.2f}с "
-                  f"({speed:.1f} симв/с), finish={finish}")
-            return content, metrics
-
-        metrics["error"] = "curl_no_choices"
-        return "", metrics
-
-    except Exception as e:
-        elapsed = time.time() - t0
-        print(f"❌ [LOCAL-LLM] curl тоже упал за {elapsed:.1f}с: {type(e).__name__}: {str(e)[:150]}")
-        metrics["error"] = type(e).__name__
-        return "", metrics
+    metrics["error"] = type(last_error).__name__ if last_error else "unknown"
+    return "", metrics
 
 
 async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000):
-    """Возвращает (content, metrics)."""
     prompt_chars = sum(len(m.get("content", "")) for m in messages)
-    print(f"☁️ [POLZA-LLM] Отправка в Polza, model=deepseek-v4-flash")
-    print(f"📥 [POLZA-LLM] Вход: {len(messages)} turns, {prompt_chars} симв. (~{prompt_chars // 2} токенов)")
+    print(f"☁️ [POLZA] Вход: {len(messages)} turns, {prompt_chars} симв.")
 
     t0 = time.time()
     metrics = {"model": "polza", "prompt_chars": prompt_chars}
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(180.0, connect=15.0)) as client:
         try:
-            polza_json = {
-                "model": "deepseek/deepseek-v4-flash",
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "thinking": {"type": "disabled"},
-                "frequency_penalty": 0.6,
-                "presence_penalty": 0.5,
-            }
             r = await client.post(
                 "https://api.polza.ai/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {POLZA_API_KEY}",
                     "Content-Type": "application/json",
                 },
-                json=polza_json,
+                json={
+                    "model": "deepseek/deepseek-v4-flash",
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "thinking": {"type": "disabled"},
+                    "frequency_penalty": 0.6,
+                    "presence_penalty": 0.5,
+                },
             )
             r.raise_for_status()
             elapsed = time.time() - t0
@@ -1352,56 +1251,55 @@ async def call_polza_llm(messages: list, temperature: float = 0.7, max_tokens: i
                 metrics["completion_tokens"] = usage.get("completion_tokens")
                 metrics["total_tokens"] = usage.get("total_tokens")
                 metrics["cost_rub"] = usage.get("cost_rub")
-                print(f"🔍 [POLZA-LLM] usage={usage}")
 
             if data.get("choices"):
                 ch = data["choices"][0]
-                msg = ch.get("message", {}) or {}
-                content = msg.get("content") or ""
-                reasoning = msg.get("reasoning") or ""
+                content = (ch.get("message", {}).get("content") or "")
                 speed = len(content) / elapsed if elapsed > 0 else 0
 
-                metrics["elapsed"] = elapsed
-                metrics["speed"] = speed
-                metrics["finish"] = ch.get("finish_reason")
-                metrics["answer_chars"] = len(content)
+                metrics.update({
+                    "elapsed": elapsed,
+                    "speed": speed,
+                    "finish": ch.get("finish_reason"),
+                    "answer_chars": len(content),
+                })
 
-                print(f"🔍 [POLZA-LLM] finish={ch.get('finish_reason')}, "
-                      f"content_len={len(content)}, reasoning_len={len(reasoning)}, "
-                      f"time={elapsed:.2f}с")
+                print(f"✅ [POLZA] {len(content)} симв. за {elapsed:.2f}с "
+                      f"({speed:.1f} симв/с), finish={ch.get('finish_reason')}")
                 return content, metrics
 
-            print(f"⚠️ [POLZA-LLM] Нет choices")
             metrics["error"] = "no_choices"
             return "", metrics
         except Exception as e:
-            elapsed = time.time() - t0
-            print(f"❌ [POLZA-LLM] Ошибка через {elapsed:.2f}с: {type(e).__name__}: {e}")
-            traceback.print_exc()
+            print(f"❌ [POLZA] {type(e).__name__}: {e}")
             metrics["error"] = type(e).__name__
             return "", metrics
 
 
-async def call_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000):
-    """Роутер. Возвращает (answer, metrics)."""
-    model = get_current_model()
-    print(f"🎛️ [LLM] Используем модель: {model}")
+
+async def call_llm(messages: list, temperature: float = 0.7, max_tokens: int = 2000, user_id: str | None = None):
+    """Роутер для local/polza. Yandex обрабатывается в route_message."""
+    model = get_current_model(user_id)
+    print(f"🎛️ [LLM] Модель пользователя: {model}")
+
     if model == "local":
+        # local first → polza fallback
         answer, metrics = await call_local_llm(messages, temperature, max_tokens)
         if not answer or not answer.strip():
-            print(f"⚠️ [LLM] Локальная не ответила — фолбэк на Polza")
+            print(f"⚠️ [LLM] Локальная не ответила — фолбэк на Polza API")
             answer, metrics = await call_polza_llm(messages, temperature, max_tokens)
             metrics["model"] = "polza (fallback)"
         return answer, metrics
-    else:
-        return await call_polza_llm(messages, temperature, max_tokens)
+
+    # model == "polza" — сразу в Polza API, local не трогаем
+    return await call_polza_llm(messages, temperature, max_tokens)
 
 
 async def local_fallback(payload_text: str, user_id: str,
                          platform: str = "Telegram",
                          is_channel: bool = False):
-    """Возвращает (answer, metrics)."""
-    print("🚑 [FALLBACK] Yandex недоступен — генерирую ответ локально")
+    """Готовит промпт и вызывает call_llm. Возвращает (answer, metrics)."""
+    print("🚑 [FALLBACK] Генерирую ответ (local → polza)")
 
     text = payload_text
     if text.startswith(RENDER_LINK_MARKER):
@@ -1417,45 +1315,41 @@ async def local_fallback(payload_text: str, user_id: str,
     if not text:
         return "Извините, я не смог получить вопрос.", {}
 
-    from_current = get_current_model()
+    # RAG (урезанный для local-модели)
+    from_current = get_current_model(user_id)
     if from_current == "local":
-        print("🖥️ [FALLBACK] Локальная модель — RAG урезан")
         context = await search_knowledge(text)
         if context:
             context = context[:1500]
-            print(f"📄 [FALLBACK] RAG-контекст (сокращён): {len(context)} символов")
-        else:
-            print("⏭️ [FALLBACK] RAG пуст")
+            print(f"📄 [RAG] урезан: {len(context)} символов")
     else:
         context = await search_knowledge_max(text)
         if context:
-            print(f"📄 [FALLBACK] RAG-контекст: {len(context)} символов")
-        else:
-            print("⏭️ [FALLBACK] RAG пуст")
+            print(f"📄 [RAG] полный: {len(context)} символов")
+
+    if not context:
+        print("⏭️ [RAG] пуст")
 
     history_full = await get_history(user_id, limit=7)
     history_for_messages = history_full[:-1] if history_full else []
 
-    current_model = get_current_model()
+    print(f"📄 [CONTEXT] {context[:300] if context else 'пусто'}")
 
-    print(f"📄 [CONTEXT] Итоговый контекст (первые 300 символов): "
-          f"{context[:300] if context else 'пусто'}")
-
-    if current_model == "local":
+    if from_current == "local":
+        # Минимальный промпт для локальной модели
         prompt = f"Вопрос: {text}\n\n"
         if context:
             prompt += f"Контекст (кратко):\n{context[:1200]}\n\n"
         prompt += "Ответь коротко, 3-5 предложений, по существу."
     else:
+        # Полный промпт для Polza API (при fallback) и для постов канала
         is_channel_post = bool(is_channel)
 
         COMMON_TAIL = (
-            "Сначала кратко откликнись на текущее сообщение пользователя "
-            "(1–2 абзаца, по существу). "
+            "Сначала кратко откликнись на текущее сообщение пользователя (1–2 абзаца). "
             "Затем плавно перейди к общим философским и богословским размышлениям "
-            "на эту тему, опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
-            "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
-            "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
+            "(2–3 абзаца). Не используй слова 'часть', 'раздел', 'во-первых'. "
+            "Пусть переход будет естественным. "
             "Не повторяй формулировки из своих прошлых ответов. "
             "Ответ должен быть содержательным, но не длиннее 1500 символов."
         )
@@ -1463,19 +1357,12 @@ async def local_fallback(payload_text: str, user_id: str,
         if is_channel_post:
             prompt = (
                 f"[Источник: {platform}]\n\n"
-                f"=== СООБЩЕНИЕ ПОСТА ===\n{text}\n=== КОНЕЦ СООБЩЕНИЯ ===\n\n"
-                f"Твоя задача:\n"
-                f"1) СНАЧАЛА кратко перескажи суть этого поста — 1–2 предложения, "
-                f"по существу, без воды и без оценочных суждений.\n"
-                f"2) ЗАТЕМ дай свой отклик на этот пост — 2–3 абзаца живым языком, "
-                f"опираясь на философские и богословские идеи из системного промпта "
-                f"и базы знаний. "
-                f"Не используй нумерацию, списки, заголовки. "
-                f"Не начинай отклик со слов «Знаешь», «Видишь ли», «Дело в том, что».\n"
-                f"3) Укажи пользователю путь Богу на основе базы знаний — но ненавязчиво, "
-                f"вплетая в текст, а не отдельной строкой.\n\n"
-                f"Формат ответа:\n"
-                f"Кратко о сути вопроса: <1–2 предложения пересказа>\n\n"
+                f"=== СООБЩЕНИЕ ПОСТА ===\n{text}\n=== КОНЕЦ ===\n\n"
+                f"1) СНАЧАЛА кратко перескажи суть поста (1–2 предложения).\n"
+                f"2) ЗАТЕМ дай отклик (2–3 абзаца, живым языком).\n"
+                f"3) Укажи путь Богу на основе базы знаний — ненавязчиво.\n\n"
+                f"Формат:\n"
+                f"Кратко о сути вопроса: <1–2 предложения>\n\n"
                 f"<2–3 абзаца отклика>\n\n"
                 f"Ответ — не длиннее 1500 символов."
             )
@@ -1487,73 +1374,36 @@ async def local_fallback(payload_text: str, user_id: str,
                 prompt = (
                     f"[Источник: {platform}]\n\n"
                     f"Пользователь прислал текст:\n{text}\n\n"
-                    f"Дай связный, естественный ответ, как в личной беседе. "
-                    f"Не используй нумерацию, заголовки, списки, маркеры. "
-                    f"Не перечисляй пункты — излагай мысли плавно, абзацами. "
-                    f"Опирайся на философские и богословские идеи из системного промпта, "
-                    f"контекста и базы знаний, не цитируй их дословно. "
-                    f"Укажи пользователю путь Богу на основе базы знаний. "
-                    f"Если пользователь прислал ссылку, проанализируй содержимое страницы "
-                    f"(оно есть в контексте) и дай ответ. "
-                    f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
+                    f"Дай связный ответ, как в личной беседе. "
+                    f"Не используй нумерацию, списки, маркеры. "
+                    f"Опирайся на философские идеи из системного промпта и базы знаний. "
+                    f"Укажи путь Богу на основе базы знаний. "
+                    f"Оформи ответ в одном сообщении. "
                     f"{COMMON_TAIL}"
                 )
             else:
                 prompt = (
                     f"[Источник: {platform}]\n\n"
                     f"Вопрос пользователя: {text}\n\n"
-                    f"Дай прямой, связный ответ, без нумерации, списков и заголовков. "
-                    f"Излагай мысли как в разговоре — плавно и цельно. "
-                    f"Используй философские и богословские идеи из системного промпта, "
-                    f"базы знаний и контекста для обоснования, но не копируй их структуру. "
-                    f"Укажи пользователю путь Богу на основе базы знаний. "
-                    f"Если пользователь прислал ссылку, проанализируй содержимое страницы "
-                    f"(оно есть в контексте) и дай ответ. "
-                    f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
+                    f"Дай прямой, связный ответ без нумерации и списков. "
+                    f"Используй идеи из системного промпта и базы знаний. "
+                    f"Укажи путь Богу на основе базы знаний. "
                     f"{COMMON_TAIL}"
                 )
 
         if context:
             if is_channel_post:
-                prompt += (
-                    f"\n\nСправочный материал из базы знаний "
-                    f"(используй по необходимости):\n{context}"
-                )
+                prompt += f"\n\nСправочный материал из БЗ:\n{context}"
             else:
-                context_intro = (
-                    "Ниже приведены философские и богословские фрагменты "
-                    "из базы знаний, релевантные запросу:\n\n"
-                )
-                prompt += f"\n\n{context_intro}{context}\n\n"
+                prompt += f"\n\nФрагменты из БЗ:\n\n{context}\n\n"
                 prompt += (
-                    "Проанализируй текст пользователя через призму этих фрагментов. "
-                    "Используй их для аргументации, сравнения и глубокого осмысления. "
-                    "Не просто цитируй — интерпретируй. "
-                    "Если пользователь прислал ссылку, проанализируй содержимое страницы "
-                    "(оно есть в контексте) и дай ответ. "
-                    "Укажи пользователю путь Богу на основе базы знаний. "
-                    "Оформи ответ в одном сообщении, без заголовков и разделителей. "
-                    "Сначала кратко откликнись на текущее сообщение пользователя "
-                    "(1–2 абзаца, по существу). "
-                    "Затем плавно перейди к общим философским и богословским размышлениям "
-                    "на эту тему, опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
-                    "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
-                    "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
-                    "Не повторяй формулировки из своих прошлых ответов. "
-                    "Ответ должен быть содержательным, но не длиннее 1500 символов."
+                    "Проанализируй текст через призму этих фрагментов. "
+                    "Не цитируй — интерпретируй. Укажи путь Богу."
                 )
 
-    total_chars = sum(len(m.get("content", "")) for m in [
-        {"content": SYSTEM_PROMPT},
-        *history_for_messages,
-        {"content": prompt},
-    ])
     print(f"📝 [PROMPT] user-часть: {len(prompt)} симв.")
-    print(f"📨 [MSG] turns={len(history_for_messages) + 2}, всего на вход: {total_chars} симв. "
-          f"(~{total_chars // 2} токенов)")
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-   
     for msg in history_for_messages:
         role = msg.get("role")
         if role not in ("user", "assistant", "bot"):
@@ -1565,231 +1415,159 @@ async def local_fallback(payload_text: str, user_id: str,
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": prompt})
 
-    answer, metrics = await call_llm(messages, temperature=0.7, max_tokens=2000)
+    total_chars = sum(len(m.get("content", "")) for m in messages)
+    print(f"📨 [MSG] turns={len(messages)}, вход: {total_chars} симв. (~{total_chars // 2} токенов)")
 
-    if not answer or not answer.strip():
-        print("🔁 [LLM] Пусто — пробуем с сокращённым промптом")
-        short_prompt = prompt[:6000]
-        msgs2 = list(messages[:-1]) + [{"role": "user", "content": short_prompt}]
-        answer, metrics = await call_llm(msgs2, temperature=0.7, max_tokens=1500)
+    answer, metrics = await call_llm(messages, temperature=0.7, max_tokens=2000, user_id=user_id)
 
+    # Если обе модели пусты — пробуем без БЗ
     if not answer or not answer.strip():
         print("🔁 [LLM] Пусто — пробуем без БЗ")
-        min_prompt = (
-            f"[Источник: {platform}]\n\n"
-            f"Пользователь прислал текст:\n{text[:2000]}\n\n"
-            f"Дай содержательный отклик по существу."
-        )
-        msgs3 = [
+        min_prompt = f"[Источник: {platform}]\n\nПользователь: {text[:2000]}\n\nДай отклик."
+        msgs2 = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": min_prompt},
         ]
-        answer, metrics = await call_llm(msgs3, temperature=0.7, max_tokens=1200)
+        answer, metrics = await call_llm(msgs2, temperature=0.7, max_tokens=1200, user_id=user_id)
 
-    print(f"✅ [FALLBACK] Ответ получен: {len(answer) if answer else 0} символов")
+    print(f"✅ [FALLBACK] {len(answer) if answer else 0} символов")
 
     if answer and answer.strip():
         try:
             await save_to_history(user_id, "bot", answer)
-        except Exception as e:
-            print(f"⚠️ [FALLBACK] Не удалось сохранить в историю: {e}")
+        except Exception:
+            pass
         _save_last_metrics(user_id, metrics, question=text)
 
     return answer, metrics
 
 
 # ==========================================
-# 🧠 ЯДРО (веб-чат и TG) — возвращает dict
+# 🎯 ГЛАВНЫЙ РОУТЕР
+# ==========================================
+async def route_message(payload_text: str, user_id: str,
+                        platform: str = "Telegram",
+                        is_channel: bool = False):
+    """
+    Возвращает (answer, metrics).
+    Логика:
+    - "yandex": Yandex → если пусто → local → polza
+    - "local" / "polza": local → polza (экономия). Если всё пусто и модель "polza" — Yandex как последний шанс.
+    """
+    model = get_current_model(user_id)
+    print(f"🎯 [ROUTE] Модель={model}, user={user_id}")
+
+    if model == "yandex":
+        answer, metrics = await call_yandex_function(payload_text, user_id)
+        if _is_yandex_error(answer):
+            print("🚑 [ROUTE] Yandex не ответил — fallback на local/polza")
+            answer, metrics = await local_fallback(payload_text, user_id, platform, is_channel)
+            metrics["model"] = "yandex-fail-fallback"
+        else:
+            # Yandex не сохраняет в историю сам — сохраняем
+            if answer.strip():
+                await save_to_history(user_id, "bot", answer)
+                _save_last_metrics(user_id, metrics, question=payload_text)
+        return answer, metrics
+
+    # polza (default) или local — оба идут через local_fallback (local → polza)
+    answer, metrics = await local_fallback(payload_text, user_id, platform, is_channel)
+
+    # Если оба пусты и модель "polza" — Yandex как последний шанс
+    if (not answer or not answer.strip()) and model == "polza":
+        print("🚑 [ROUTE] local+polza пусты — пробуем Yandex")
+        yandex_answer, ymetrics = await call_yandex_function(payload_text, user_id)
+        if not _is_yandex_error(yandex_answer):
+            await save_to_history(user_id, "bot", yandex_answer)
+            _save_last_metrics(user_id, ymetrics, question=payload_text)
+            return yandex_answer, ymetrics
+
+    return answer, metrics
+
+
+# ==========================================
+# 🧠 ЯДРО (веб-чат + TG команды)
 # ==========================================
 async def process_message_core(user_id: str, text: str) -> dict:
     text_stripped = text.strip()
     cmd = text_stripped.lower().split()[0] if text_stripped else ""
 
+    if user_id not in _USER_MODELS:
+        await load_user_model(user_id)
+
     # ===== Команды =====
     if cmd in ("/model", "/модель"):
-        cur = get_current_model()
+        cur = get_current_model(user_id)
         return {
             "type": "command",
             "command": "model_info",
-            "response": f"🤖 Текущая модель: {_model_display_name(cur)}\n\nВыберите модель:",
+            "response": f"🤖 Ваша модель: {_model_display_name(cur)}\n\nВыберите:",
             "current_model": cur,
             "options": [
-                {"id": "polza", "label": "DeepSeek V4 Flash", "active": cur == "polza"},
+                {"id": "polza", "label": "Polza (DeepSeek)", "active": cur == "polza"},
                 {"id": "local", "label": f"Локальная ({LOCAL_LLM_MODEL or 'Qwen'})", "active": cur == "local"},
+                {"id": "yandex", "label": "Yandex Cloud", "active": cur == "yandex"},
             ],
         }
 
     if cmd in ("/model_polza", "/полза"):
-        await save_current_model("polza")
-        return {
-            "type": "command",
-            "command": "model_switched",
-            "response": f"✅ Модель переключена на {_model_display_name('polza')}",
-            "current_model": "polza",
-        }
+        await save_current_model("polza", user_id)
+        return {"type": "command", "command": "model_switched",
+                "response": f"✅ Ваша модель: {_model_display_name('polza')}",
+                "current_model": "polza"}
 
     if cmd in ("/model_local", "/локальная", "/модель_локальная"):
-        await save_current_model("local")
-        return {
-            "type": "command",
-            "command": "model_switched",
-            "response": f"✅ Модель переключена на {_model_display_name('local')}",
-            "current_model": "local",
-        }
+        await save_current_model("local", user_id)
+        return {"type": "command", "command": "model_switched",
+                "response": f"✅ Ваша модель: {_model_display_name('local')}",
+                "current_model": "local"}
+
+    if cmd in ("/model_yandex", "/yandex", "/яндекс", "/модель_яндекс"):
+        await save_current_model("yandex", user_id)
+        return {"type": "command", "command": "model_switched",
+                "response": f"✅ Ваша модель: {_model_display_name('yandex')}",
+                "current_model": "yandex"}
 
     if cmd in ("/stat", "/stats", "/стат", "/статистика"):
         m = _get_last_metrics(user_id)
         if not m:
-            return {
-                "type": "command",
-                "command": "stats",
-                "response": "📊 Пока нет данных. Отправьте сообщение, потом /stat.",
-            }
+            return {"type": "command", "command": "stats",
+                    "response": "📊 Пока нет данных. Отправьте сообщение, потом /stat."}
         lines = ["📊 Последний ответ"]
         if m.get("question"):
             lines.append(f"Вопрос: «{m['question']}»")
         lines.append("")
         lines.append(_fmt_metrics(m) or "—")
-        return {
-            "type": "command",
-            "command": "stats",
-            "response": "\n\n".join(lines),
-            "metrics": m,
-        }
+        return {"type": "command", "command": "stats",
+                "response": "\n\n".join(lines), "metrics": m}
 
     if cmd in ("/help", "/помощь"):
-        return {
-            "type": "command",
-            "command": "help",
-            "response": (
-                "📖 Команды:\n\n"
-                "/model — показать и сменить модель\n"
-                "/model_polza — DeepSeek V4 Flash\n"
-                "/model_local — Локальная (Qwen)\n"
-                "/stat — метрики последнего ответа\n"
-                "/help — эта справка"
-            ),
-        }
+        return {"type": "command", "command": "help",
+                "response": (
+                    "📖 Команды:\n\n"
+                    "/model — показать и сменить модель\n"
+                    "/model_polza — Polza (DeepSeek) [дефолт]\n"
+                    "/model_local — Локальная модель\n"
+                    "/model_yandex — Yandex Cloud\n"
+                    "/stat — метрики последнего ответа\n"
+                    "/help — эта справка\n\n"
+                    "🔄 По умолчанию: сначала локальная, при неудаче — Polza."
+                )}
 
     # ===== Обычное сообщение =====
     if len(text) > 1000:
-        return {"type": "message", "response": "Сообщение слишком длинное. Максимум 1000 символов.", "error": True}
-
-    if not POLZA_API_KEY and get_current_model() == "polza":
-        return {"type": "message", "response": "Ошибка: не настроен ключ Polza AI.", "error": True}
+        return {"type": "message", "response": "Слишком длинное. Максимум 1000 символов.", "error": True}
 
     print(f"🧠 Запрос от {user_id}: '{text[:50]}...'")
     await save_to_history(user_id, "user", text)
 
-    history = await get_history(user_id, limit=7)
-    context = await search_knowledge(text) if POLZA_EMBEDDING_API_KEY else ""
-
-    print(f"📄 [CONTEXT] Итоговый контекст (первые 300 символов): "
-          f"{context[:300] if context else 'пусто'}")
-
-    COMMON_TAIL = (
-        "Сначала кратко откликнись на текущее сообщение пользователя (1–2 абзаца, по существу). "
-        "Затем плавно перейди к общим философским и богословским размышлениям на эту тему, "
-        "опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
-        "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
-        "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
-        "Не повторяй формулировки из своих прошлых ответов. "
-        "Ответ должен быть содержательным, но не длиннее 1500 символов."
-    )
-
-    _q_re = re.compile(r"\b(как|почему|что|зачем|когда|где|кто)\b", re.IGNORECASE)
-    is_question = ("?" in text) or bool(_q_re.search(text))
-
-    if not is_question:
-        prompt = (
-            f"[Источник: web]\n\n"
-            f"Пользователь прислал текст:\n{text}\n\n"
-            f"Дай связный, естественный ответ, как в личной беседе. "
-            f"Не используй нумерацию, заголовки, списки, маркеры. "
-            f"Не перечисляй пункты — излагай мысли плавно, абзацами. "
-            f"Опирайся на философские и богословские идеи из системного промпта, "
-            f"контекста и базы знаний, не цитируй их дословно. "
-            f"Укажи пользователю путь Богу на основе базы знаний. "
-            f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
-            f"{COMMON_TAIL}"
-        )
-    else:
-        prompt = (
-            f"[Источник: web]\n\n"
-            f"Вопрос пользователя: {text}\n\n"
-            f"Дай прямой, связный ответ, без нумерации, списков и заголовков. "
-            f"Излагай мысли как в разговоре — плавно и цельно. "
-            f"Используй философские и богословские идеи из системного промпта, "
-            f"базы знаний и контекста для обоснования, но не копируй их структуру. "
-            f"Укажи пользователю путь Богу на основе базы знаний. "
-            f"Оформи ответ в одном сообщении, без заголовков и разделителей. "
-            f"{COMMON_TAIL}"
-        )
-
-    if context:
-        context_intro = (
-            "Ниже приведены философские и богословские фрагменты "
-            "из базы знаний, релевантные запросу:\n\n"
-        )
-        prompt += f"\n\n{context_intro}{context}\n\n"
-        prompt += (
-            "Проанализируй текст пользователя через призму этих фрагментов. "
-            "Используй их для аргументации, сравнения и глубокого осмысления. "
-            "Не просто цитируй — интерпретируй. "
-            "Укажи пользователю путь Богу на основе базы знаний. "
-            "Оформи ответ в одном сообщении, без заголовков и разделителей. "
-            "Сначала кратко откликнись на текущее сообщение пользователя (1–2 абзаца, по существу). "
-            "Затем плавно перейди к общим философским и богословским размышлениям на эту тему, "
-            "опираясь на идеи из контекста и базы знаний (2–3 абзаца). "
-            "Не используй слова 'часть', 'раздел', 'во-первых' и т.п. "
-            "Пусть переход будет естественным — как в разговоре мудрого собеседника. "
-            "Не повторяй формулировки из своих прошлых ответов. "
-            "Ответ должен быть содержательным, но не длиннее 1500 символов."
-        )
-
-    print(f"📝 [PROMPT] user-часть: {len(prompt)} симв.")
-
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for msg in history[:-1]:
-        role = msg.get("role")
-        if role not in ("user", "assistant"):
-            continue
-        content = (msg.get("content") or "").strip()
-        if content:
-            messages.append({"role": role, "content": content})
-    messages.append({"role": "user", "content": prompt})
-
-    total_chars = sum(len(m.get("content", "")) for m in messages)
-    print(f"📨 [MSG] turns={len(messages)}, всего на вход: {total_chars} симв. "
-          f"(~{total_chars // 2} токенов)")
-
-    answer, metrics = await call_llm(messages, temperature=0.7, max_tokens=2500)
+    answer, metrics = await route_message(text, user_id, platform="Web", is_channel=False)
 
     if not answer or not answer.strip():
-        print("🔁 [LLM] Пусто — пробуем с сокращённым промптом")
-        short_prompt = prompt[:6000]
-        msgs2 = list(messages[:-1]) + [{"role": "user", "content": short_prompt}]
-        answer, metrics = await call_llm(msgs2, temperature=0.7, max_tokens=1500)
-
-    if not answer or not answer.strip():
-        print("🔁 [LLM] Пусто — пробуем без БЗ")
-        min_prompt = f"[Источник: web]\n\nПользователь: {text[:2000]}\n\nДай отклик по существу."
-        msgs3 = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": min_prompt},
-        ]
-        answer, metrics = await call_llm(msgs3, temperature=0.7, max_tokens=1200)
-
-    if not answer or not answer.strip():
-        return {
-            "type": "message",
-            "response": "Извините, ИИ-модель временно не отвечает. Попробуйте ещё раз.",
-            "error": True,
-            "model": metrics.get("model") if metrics else None,
-        }
-
-    await save_to_history(user_id, "bot", answer)
-    _save_last_metrics(user_id, metrics, question=text)
+        return {"type": "message",
+                "response": "Извините, все модели временно недоступны. Попробуйте ещё раз.",
+                "error": True,
+                "model": metrics.get("model") if metrics else None}
 
     return {
         "type": "message",
@@ -1808,18 +1586,22 @@ async def process_message_core(user_id: str, text: str) -> dict:
 
 
 # ==========================================
-# 🧵 ФОНОВАЯ ОБРАБОТКА TELEGRAM
+# 🧵 ОБРАБОТКА TELEGRAM
 # ==========================================
 async def process_and_reply(chat_id: int, user_id: str, text: str,
                             is_channel: bool = False, reply_to_message_id: int = None,
                             post_link: str = None, is_group: bool = False):
     try:
-        print(f"🧵 [BG] Начинаем обработку для chat_id={chat_id}, reply_to={reply_to_message_id}")
+        print(f"🧵 [BG] chat_id={chat_id}, reply_to={reply_to_message_id}")
+
+        # Загружаем модель пользователя (если ещё не в кэше)
+        if user_id not in _USER_MODELS:
+            await load_user_model(user_id)
 
         if not is_channel and not is_group:
             await send_telegram_message(
                 chat_id,
-                "⏳ Думаю над ответом, это может занять до минуты. Пожалуйста, подождите...",
+                "⏳ Думаю над ответом, это может занять до минуты...",
             )
 
         urls = extract_urls(text)
@@ -1827,101 +1609,55 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
 
         if urls:
             page_url = urls[0]
-            print(f"🔗 [BG] Найдена ссылка: {page_url}")
-
-            if "t.me/" in page_url or "telegram.me/" in page_url:
-                print(f"📱 [BG] Тип: Telegram-канал")
-            elif "vk.com/wall" in page_url or "vk.ru/wall" in page_url:
-                print(f"📘 [BG] Тип: ВКонтакте")
-            else:
-                print(f"🌐 [BG] Тип: обычный сайт")
-
+            print(f"🔗 [BG] Ссылка: {page_url}")
             page_text = await fetch_url_content(page_url)
             if page_text:
-                print(f"📄 [BG] Извлечено {len(page_text)} символов из ссылки")
+                print(f"📄 [BG] Извлечено {len(page_text)} символов")
             else:
-                print(f"⚠️ [BG] Не удалось извлечь содержимое {page_url}")
+                print(f"⚠️ [BG] Не удалось извлечь {page_url}")
 
         text_clean = re.sub(r'https?://\S+', '', text).strip()
         if not text_clean and urls:
             text_clean = "Проанализируй содержимое страницы по ссылке и дай развёрнутый ответ."
 
         if urls and not page_text:
-            print(f"⚠️ [BG] Контент по ссылке не извлечён")
             await send_telegram_message(
                 chat_id,
-                "⚠️ Не удалось загрузить содержимое по ссылке "
-                "(приватный канал, удалённый пост, пейволл или сайт с защитой). "
-                "Отвечу по общим знаниям."
+                "⚠️ Не удалось загрузить содержимое по ссылке. Отвечу по общим знаниям."
             )
 
         if not urls:
             if len(text) > 1900:
                 payload_text = f"{RENDER_LINK_MARKER}\n{text}"
-                print(f"📤 [BG] Длинный текст без ссылки — с маркером ({len(payload_text)} симв.)")
+                print(f"📤 [BG] Длинный текст ({len(payload_text)} симв.)")
             else:
                 payload_text = text
-                print(f"📤 [BG] Без ссылки — простой текст ({len(payload_text)} симв.)")
+                print(f"📤 [BG] Текст ({len(payload_text)} симв.)")
         elif page_text:
             page_text_safe = page_text.replace("https://", "").replace("http://", "")
             payload_text = (
                 f"{RENDER_LINK_MARKER}\n"
                 f"{text_clean}\n\n"
-                f"Содержимое страницы, которую прислал пользователь:\n"
-                f"{page_text_safe}"
+                f"Содержимое страницы:\n{page_text_safe}"
             )
         else:
             payload_text = (
                 f"{RENDER_LINK_MARKER}\n"
                 f"{text_clean}\n\n"
-                f"[Содержимое страницы загрузить не удалось. Ответь по общим знаниям.]"
+                f"[Содержимое загрузить не удалось. Ответь по общим знаниям.]"
             )
 
-       
         print(f"📤 [BG] Payload: {len(payload_text)} симв. Начало: {payload_text[:120]!r}")
 
-        current_model = get_current_model()
-        print(f"🎛️ [BG] Выбранная модель: {current_model}")
-
-        if current_model == "local":
-            # Пользователь выбрал локальную — Yandex пропускаем сразу
-            print("🖥️ [BG] Локальная модель — Yandex пропускаем, идём в local_fallback")
-            try:
-                response_text, _ = await local_fallback(
-                    payload_text, user_id,
-                    platform="Telegram",
-                    is_channel=is_channel,
-                )
-            except Exception as e:
-                print(f"❌ [BG] local_fallback упал: {e}")
-                traceback.print_exc()
-                response_text = ""
-        else:
-            # polza: Yandex first, потом fallback на Polza
-            response_text = await call_yandex_function(payload_text, user_id)
-            print(f"🧵 [BG] Ответ Yandex: {response_text[:120]}...")
-
-            is_yandex_failed = (
-                not response_text
-                or response_text.startswith("❌")
-                or response_text.startswith("Извините, произошла ошибка")
-                or response_text.startswith("Извините, я не смог сформулировать")
-            )
-            if is_yandex_failed:
-                print("🚑 [BG] Yandex недоступен — переключаюсь на локальный fallback")
-                try:
-                    response_text, _ = await local_fallback(
-                        payload_text, user_id,
-                        platform="Telegram",
-                        is_channel=is_channel,
-                    )
-                except Exception as e:
-                    print(f"❌ [BG] Fallback тоже упал: {e}")
-                    traceback.print_exc()
-                    response_text = ""
+        # === Роутер ===
+        response_text, _ = await route_message(
+            payload_text, user_id,
+            platform="Telegram",
+            is_channel=is_channel,
+        )
 
         if not response_text or not response_text.strip():
-            print("⚠️ [BG] Пустой ответ — в чат не отправляем")
+            print("⚠️ [BG] Пустой ответ — не отправляем")
             return
 
         if is_channel and post_link:
@@ -1934,20 +1670,18 @@ async def process_and_reply(chat_id: int, user_id: str, text: str,
         else:
             final_text = response_text
 
-        # Метрики — только по команде /stat, автоматический футер не добавляется
-
         await send_telegram_message(
             chat_id,
             final_text,
             reply_to_message_id=reply_to_message_id if is_channel else None,
         )
-        print(f"🧵 [BG] Ответ отправлен в чат {chat_id}")
+        print(f"🧵 [BG] Отправлено в {chat_id}")
 
     except Exception as e:
-        print(f"❌ [BG] Ошибка фоновой обработки: {e}")
+        print(f"❌ [BG] Ошибка: {e}")
         traceback.print_exc()
         try:
-            await send_telegram_message(chat_id, "Извините, произошла ошибка при обработке.")
+            await send_telegram_message(chat_id, "Извините, произошла ошибка.")
         except Exception:
             pass
 
@@ -1992,7 +1726,7 @@ async def send_telegram_message(chat_id, text, reply_to_message_id=None, parse_m
             async with session.post(url, json=payload) as resp:
                 result = await resp.json()
                 if not result.get("ok"):
-                    print(f"❌ Ошибка Telegram (часть {i}): {result}")
+                    print(f"❌ Ошибка Telegram: {result}")
                 else:
                     print(f"✅ Отправлено: message_id={result.get('result', {}).get('message_id')}")
 
@@ -2001,63 +1735,44 @@ async def send_telegram_message(chat_id, text, reply_to_message_id=None, parse_m
 
 
 # ==========================================
-# 🎯 WEBHOOK TELEGRAM
+# 🎯 WEBHOOK
 # ==========================================
 @app.post("/webhook/telegram")
 async def telegram_webhook(update: dict):
-    import json as _json
     update_types = [k for k in update.keys() if k != "update_id"]
     print(f"📩 [RAW] types={update_types}")
 
-    # ============ ПОСТЫ В КАНАЛЕ ============
+    # ============ ПОСТЫ КАНАЛА ============
     if "channel_post" in update:
         post = update["channel_post"]
         from_info = post.get("from", {}) or {}
 
         if from_info.get("is_bot") and from_info.get("username") not in ("Channel_Bot",):
-            print("⏭️ [CHANNEL] Пост от бота — игнорируем")
             return {"ok": True}
 
         chat_id = post["chat"]["id"]
         user_id = f"tg_channel_{chat_id}"
 
         text = (post.get("text") or post.get("caption") or "").strip()
-
         if not text and "rich_message" in post:
-            print("💎 [CHANNEL] Обнаружен rich_message")
             text = extract_text_from_rich_message(post["rich_message"])
-            print(f"💎 [CHANNEL] Извлечено {len(text)} символов")
-
-        if not text:
-            keys = [k for k in post.keys() if k != "chat"]
-            print(f"🔍 [CHANNEL-RAW] Пост без текста. Ключи: {keys}")
-            return {"ok": True}
-
-        if len(text) < 15:
-            print(f"⏭️ [CHANNEL] Пост слишком короткий")
+        if not text or len(text) < 15:
             return {"ok": True}
 
         for t in ["#феон", "#feon", f"@{BOT_USERNAME}"]:
             text = re.sub(re.escape(t), "", text, flags=re.IGNORECASE).strip()
 
         post_message_id = post["message_id"]
-
         forward_chat = post.get("forward_from_chat") or {}
         forward_msg_id = post.get("forward_from_message_id")
 
         if forward_chat and forward_chat.get("type") == "channel" and forward_msg_id:
             source_username = forward_chat.get("username")
-            source_id = forward_chat.get("id")
-            source_title = forward_chat.get("title", "канал-источник")
-
             if source_username:
                 post_link = f"https://t.me/{source_username}/{forward_msg_id}"
             else:
-                internal = str(source_id).replace("-100", "")
+                internal = str(forward_chat.get("id")).replace("-100", "")
                 post_link = f"https://t.me/c/{internal}/{forward_msg_id}"
-
-            print(f"📣 [CHANNEL] Пересылка из «{source_title}» (msg_id={forward_msg_id})")
-            print(f"🔗 [CHANNEL] Ссылка на ИСХОДНЫЙ пост: {post_link}")
         else:
             channel_username = post["chat"].get("username")
             if channel_username:
@@ -2065,10 +1780,6 @@ async def telegram_webhook(update: dict):
             else:
                 internal_id = str(chat_id).replace("-100", "")
                 post_link = f"https://t.me/c/{internal_id}/{post_message_id}"
-
-            print(f"📣 [CHANNEL] Своя публикация (msg_id={post_message_id})")
-
-        print(f"📝 Текст: {text[:80]}...")
 
         asyncio.create_task(process_and_reply(
             chat_id, user_id, text,
@@ -2078,26 +1789,21 @@ async def telegram_webhook(update: dict):
         ))
         return {"ok": True}
 
-    # ============ ОБЫЧНЫЕ СООБЩЕНИЯ ============
+    # ============ СООБЩЕНИЯ ============
     if "message" in update:
         message = update["message"]
         from_info = message.get("from", {}) or {}
         sender_chat = message.get("sender_chat", {}) or {}
 
         if BOT_ID and from_info.get("id") == BOT_ID:
-            print(f"⏭️ [MESSAGE] Своё сообщение — игнорируем")
             return {"ok": True}
-
         if sender_chat and sender_chat.get("type") == "channel":
-            print(f"⏭️ [MESSAGE] Сообщение от канала — игнорируем")
             return {"ok": True}
-
         is_real_bot = (
             from_info.get("is_bot")
             and from_info.get("username") not in ("GroupAnonymousBot", "Channel_Bot")
         )
         if is_real_bot:
-            print(f"⏭️ [MESSAGE] Сообщение от бота — игнорируем")
             return {"ok": True}
 
         chat_id = message["chat"]["id"]
@@ -2106,12 +1812,10 @@ async def telegram_webhook(update: dict):
         text = (message.get("text") or message.get("caption") or "").strip()
         if not text and "rich_message" in message:
             text = extract_text_from_rich_message(message["rich_message"])
-            print(f"💎 [MESSAGE] Из rich_message извлечено {len(text)} символов")
         if not text:
             return {"ok": True}
 
         if text.startswith("⏳") or text.startswith("❌") or text.startswith("⚠️") or text.startswith("@Feon_ai_bot говорит:"):
-            print("⏭️ [MESSAGE] Служебное — игнорируем")
             return {"ok": True}
 
         if chat_type in ("group", "supergroup"):
@@ -2124,7 +1828,6 @@ async def telegram_webhook(update: dict):
         else:
             user_id = f"tg_{from_info.get('id') or chat_id}"
 
-        # ФИЛЬТР ГРУПП
         if chat_type in ("group", "supergroup"):
             mention_triggers = [
                 f"@{BOT_USERNAME}",
@@ -2133,40 +1836,32 @@ async def telegram_webhook(update: dict):
             ]
             text_lower = text.lower()
             is_mentioned = any(t.lower() in text_lower for t in mention_triggers)
-
             reply_to = message.get("reply_to_message", {})
             is_reply_to_bot = reply_to.get("from", {}).get("id") == BOT_ID
-
             is_command = text.startswith("/")
 
             if not (is_mentioned or is_reply_to_bot or is_command):
-                print("⏭️ [GROUP] Нет упоминания — игнорируем")
                 return {"ok": True}
 
             for t in mention_triggers:
                 text = text.replace(t, "").strip()
-            text = text.strip()
             if not text:
                 text = "Ответь коротко, что ты можешь помочь."
 
-            print(f"💬 [GROUP] Упоминание: {text[:60]!r}")
-
-        # КОМАНДЫ
         cmd = text.lower().split()[0] if text else ""
 
         if cmd == "/start":
             await send_telegram_message(
                 chat_id,
                 "🌟 Привет! Я Феон — верующий ИИ.\n\n"
-                "Помогу осмыслить текст, ссылку или философский вопрос. "
-                "Отвечаю по существу, с опорой на христианскую традицию.\n\n"
+                "Помогу осмыслить текст, ссылку или вопрос.\n\n"
                 "Команды:\n"
                 "/help — справка\n"
                 "/menu — быстрые действия\n"
-                "/model — показать/сменить модель\n"
-                "/stat — метрики последнего ответа\n"
+                "/model — сменить модель\n"
+                "/stat — метрики ответа\n"
                 "/about — о Феоне\n\n"
-                "Просто напиши что-нибудь — и я отвечу."
+                "Просто напиши что-нибудь."
             )
             return {"ok": True}
 
@@ -2175,17 +1870,18 @@ async def telegram_webhook(update: dict):
                 chat_id,
                 "📖 Справка:\n\n"
                 "Что умею:\n"
-                "• Отвечать на вопросы — простые и сложные\n"
-                "• Разбирать ссылки (статьи, посты)\n"
-                "• Давать философский отклик\n\n"
+                "• Отвечать на вопросы\n"
+                "• Разбирать ссылки\n"
+                "• Философский отклик\n\n"
                 "Работа в группах:\n"
                 f"@{BOT_USERNAME} вопрос\n"
                 "#феон вопрос\n"
                 "Или ответом на моё сообщение.\n\n"
                 "Команды:\n"
-                "/model — показать/сменить модель\n"
-                "/model_polza — DeepSeek V4 Flash\n"
-                "/model_local — Локальная (Qwen)\n"
+                "/model — сменить модель\n"
+                "/model_polza — Polza [дефолт]\n"
+                "/model_local — Локальная\n"
+                "/model_yandex — Yandex Cloud\n"
                 "/stat — метрики последнего ответа"
             )
             return {"ok": True}
@@ -2194,8 +1890,7 @@ async def telegram_webhook(update: dict):
             await send_telegram_message(
                 chat_id,
                 "🧠 Феон — верующий ИИ\n\n"
-                "Ищу смысл на стыке веры, философии и технологий. "
-                "Опираюсь на христианскую традицию и базу знаний.\n\n"
+                "Ищу смысл на стыке веры, философии и технологий.\n\n"
                 "Канал: @Feon_ai_theology"
             )
             return {"ok": True}
@@ -2216,41 +1911,49 @@ async def telegram_webhook(update: dict):
             return {"ok": True}
 
         if cmd == "/model":
-            cur = get_current_model()
+            if user_id not in _USER_MODELS:
+                await load_user_model(user_id)
+            cur = get_current_model(user_id)
             await send_telegram_message(
                 chat_id,
-                f"🤖 Текущая модель: {_model_display_name(cur)}\n\n"
+                f"🤖 Ваша модель: {_model_display_name(cur)}\n\n"
                 f"Сменить:\n"
-                f"/model_polza — DeepSeek V4 Flash\n"
-                f"/model_local — Локальная ({LOCAL_LLM_MODEL or 'Qwen'})"
+                f"/model_polza — Polza (DeepSeek) [дефолт]\n"
+                f"/model_local — Локальная ({LOCAL_LLM_MODEL or 'Qwen'})\n"
+                f"/model_yandex — Yandex Cloud\n\n"
+                f"🔄 По умолчанию: local → polza."
             )
             return {"ok": True}
 
         if cmd in ("/model_polza", "/полза"):
-            await save_current_model("polza")
+            await save_current_model("polza", user_id)
             await send_telegram_message(
                 chat_id,
-                f"✅ Модель переключена на {_model_display_name('polza')}"
+                f"✅ Ваша модель: {_model_display_name('polza')}"
             )
             return {"ok": True}
 
         if cmd in ("/model_local", "/локальная", "/модель_локальная"):
-            await save_current_model("local")
+            await save_current_model("local", user_id)
             await send_telegram_message(
                 chat_id,
-                f"✅ Модель переключена на {_model_display_name('local')}"
+                f"✅ Ваша модель: {_model_display_name('local')}"
+            )
+            return {"ok": True}
+
+        if cmd in ("/model_yandex", "/yandex", "/яндекс", "/модель_яндекс"):
+            await save_current_model("yandex", user_id)
+            await send_telegram_message(
+                chat_id,
+                f"✅ Ваша модель: {_model_display_name('yandex')}"
             )
             return {"ok": True}
 
         if cmd in ("/stat", "/stats", "/стат", "/статистика"):
             m = _get_last_metrics(user_id)
             if not m:
-                await send_telegram_message(
-                    chat_id,
-                    "📊 Пока нет данных. Отправьте сообщение, потом /stat."
-                )
+                await send_telegram_message(chat_id, "📊 Пока нет данных. Отправьте сообщение, потом /stat.")
                 return {"ok": True}
-
             lines = ["📊 Последний ответ"]
             if m.get("question"):
                 lines.append(f"Вопрос: «{m['question']}»")
@@ -2274,7 +1977,7 @@ async def telegram_webhook(update: dict):
 # ==========================================
 @app.get("/")
 def read_root():
-    return {"status": "running", "message": "Feon RAG Adapter (TG + Web) работает!"}
+    return {"status": "running", "message": "Feon RAG Adapter"}
 
 
 @app.post("/query")
@@ -2284,12 +1987,10 @@ async def handle_query(request: Request):
         message = body.get("message") or body.get("text", "")
         user_id = body.get("user_id", "anonymous")
         if not message:
-            return JSONResponse({"error": "Сообщение не может быть пустым"}, status_code=400)
-
+            return JSONResponse({"error": "empty"}, status_code=400)
         result = await process_message_core(user_id, message)
         return JSONResponse(result)
     except Exception as e:
-        print(f"❌ Ошибка в /query: {e}")
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -2318,11 +2019,7 @@ async def get_all_users(request: Request):
             if r.payload:
                 uid = r.payload.get("user_id", "unknown")
                 if uid not in users:
-                    users[uid] = {
-                        "user_id": uid,
-                        "message_count": 0,
-                        "last_activity": r.payload.get("timestamp", ""),
-                    }
+                    users[uid] = {"user_id": uid, "message_count": 0, "last_activity": r.payload.get("timestamp", "")}
                 users[uid]["message_count"] += 1
                 if r.payload.get("timestamp", "") > users[uid]["last_activity"]:
                     users[uid]["last_activity"] = r.payload.get("timestamp", "")
@@ -2343,7 +2040,7 @@ async def delete_user(user_id: str, request: Request):
                 must=[models.FieldCondition(key="user_id", match=models.MatchValue(value=user_id))]
             ),
         )
-        return JSONResponse({"status": "success", "message": f"Пользователь {user_id} удален"})
+        return JSONResponse({"status": "success", "message": f"Удалён {user_id}"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -2357,18 +2054,10 @@ async def debug_find(request: Request):
         if not needle:
             return JSONResponse({"error": "text required"}, status_code=400)
 
-        try:
-            cnt = await asyncio.to_thread(qdrant.count, collection_name=COLLECTION_NAME, exact=True)
-            total = cnt.count
-        except Exception:
-            total = -1
-
         all_found = []
         next_offset = None
         scanned = 0
-        MAX_SCAN = 100000
-
-        while scanned < MAX_SCAN:
+        while scanned < 100000:
             records, next_offset = await asyncio.to_thread(
                 qdrant.scroll,
                 collection_name=COLLECTION_NAME,
@@ -2389,15 +2078,8 @@ async def debug_find(request: Request):
             if next_offset is None:
                 break
 
-        return JSONResponse({
-            "needle": needle,
-            "total_in_collection": total,
-            "scanned": scanned,
-            "found": len(all_found),
-            "matches": all_found[:20],
-        })
+        return JSONResponse({"needle": needle, "scanned": scanned, "found": len(all_found), "matches": all_found[:20]})
     except Exception as e:
-        traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -2407,22 +2089,14 @@ async def get_all_knowledge(request: Request, offset: int = 0, limit: int = 500)
     try:
         if limit > 1000:
             limit = 1000
-
         try:
-            count_result = await asyncio.to_thread(
-                qdrant.count, collection_name=COLLECTION_NAME, exact=True
-            )
-            total_count = count_result.count
-            print(f"📊 [get_all_knowledge] Всего фрагментов: {total_count}")
-        except Exception as e:
-            print(f"⚠️ [get_all_knowledge] Ошибка подсчёта: {e}")
+            cnt = await asyncio.to_thread(qdrant.count, collection_name=COLLECTION_NAME, exact=True)
+            total_count = cnt.count
+        except Exception:
             total_count = 0
 
         records, _ = await asyncio.to_thread(
-            qdrant.scroll,
-            collection_name=COLLECTION_NAME,
-            limit=offset + limit,
-            with_payload=True,
+            qdrant.scroll, collection_name=COLLECTION_NAME, limit=offset + limit, with_payload=True
         )
         paginated = records[offset:offset + limit]
 
@@ -2442,11 +2116,9 @@ async def get_all_knowledge(request: Request, offset: int = 0, limit: int = 500)
             files_stats[fname]["total_length"] += item["length"]
 
         return JSONResponse({
-            "knowledge": knowledge_list,
-            "total": total_count,
+            "knowledge": knowledge_list, "total": total_count,
             "files": list(files_stats.values()),
-            "offset": offset,
-            "limit": limit,
+            "offset": offset, "limit": limit,
             "has_more": len(records) > offset + limit,
         })
     except Exception as e:
@@ -2459,7 +2131,7 @@ async def add_knowledge(request: Request):
         body = await request.json()
         text = body.get("text", "")
         if not text or len(text.strip()) < 10:
-            return JSONResponse({"error": "Текст слишком короткий"}, status_code=400)
+            return JSONResponse({"error": "short"}, status_code=400)
 
         doc_vector = await get_embedding(text)
         stable_id = hashlib.md5(text.encode()).hexdigest()
@@ -2467,16 +2139,11 @@ async def add_knowledge(request: Request):
         await asyncio.to_thread(
             qdrant.upsert,
             collection_name=COLLECTION_NAME,
-            points=[models.PointStruct(
-                id=stable_id,
-                vector=doc_vector,
-                payload={"text": text},
-            )],
+            points=[models.PointStruct(id=stable_id, vector=doc_vector, payload={"text": text})],
             wait=True,
         )
         return JSONResponse({"status": "success", "message": "Знание добавлено"})
     except Exception as e:
-        traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -2521,26 +2188,19 @@ async def upload_document(file: UploadFile = File(...)):
         chunks = [c for c in chunks if len(c.strip()) > 30]
 
         if not chunks:
-            return JSONResponse({"error": "Не удалось разбить текст на чанки"}, status_code=400)
+            return JSONResponse({"error": "no chunks"}, status_code=400)
 
-        print(f"📄 [UPLOAD] {file.filename}: {len(chunks)} чанков, батч-эмбеддинги...")
-
-        try:
-            vectors = await get_embeddings_batch(chunks, batch_size=32)
-        except Exception as e:
-            print(f"❌ [UPLOAD] Батч-эмбеддинги упали: {e}")
-            return JSONResponse({"error": f"Ошибка эмбеддингов: {e}"}, status_code=500)
+        print(f"📄 [UPLOAD] {file.filename}: {len(chunks)} чанков, батч...")
+        vectors = await get_embeddings_batch(chunks, batch_size=32)
 
         points = []
         for i, chunk in enumerate(chunks):
             vec = vectors[i] if i < len(vectors) else None
             if vec is None:
-                print(f"⚠️ Пропуск фрагмента {i}: нет эмбеддинга")
                 continue
             stable_id = hashlib.md5(f"{file.filename}_{i}".encode()).hexdigest()
             points.append(models.PointStruct(
-                id=stable_id,
-                vector=vec,
+                id=stable_id, vector=vec,
                 payload={"text": chunk, "source_file": file.filename},
             ))
 
@@ -2551,7 +2211,6 @@ async def upload_document(file: UploadFile = File(...)):
                 points=points,
                 wait=True,
             )
-            print(f"✅ [UPLOAD] Сохранено {len(points)} точек за раз")
 
         return JSONResponse({
             "status": "success",
@@ -2567,15 +2226,15 @@ async def delete_knowledge(request: Request):
     verify_admin(request)
     try:
         body = await request.json()
-        knowledge_id = body.get("id")
-        if not knowledge_id:
-            return JSONResponse({"error": "ID не указан"}, status_code=400)
+        kid = body.get("id")
+        if not kid:
+            return JSONResponse({"error": "no id"}, status_code=400)
         await asyncio.to_thread(
             qdrant.delete,
             collection_name=COLLECTION_NAME,
-            points_selector=models.PointIdsList(points=[knowledge_id]),
+            points_selector=models.PointIdsList(points=[kid]),
         )
-        return JSONResponse({"status": "success", "message": f"Знание {knowledge_id} удалено"})
+        return JSONResponse({"status": "success", "message": f"Удалено {kid}"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -2594,17 +2253,14 @@ async def delete_file_knowledge(file_name: str, request: Request):
             with_payload=False,
         )
         if not records:
-            return JSONResponse({"error": "Файл не найден"}, status_code=404)
-        ids_to_delete = [r.id for r in records]
+            return JSONResponse({"error": "not found"}, status_code=404)
+        ids = [r.id for r in records]
         await asyncio.to_thread(
             qdrant.delete,
             collection_name=COLLECTION_NAME,
-            points_selector=models.PointIdsList(points=ids_to_delete),
+            points_selector=models.PointIdsList(points=ids),
         )
-        return JSONResponse({
-            "status": "success",
-            "message": f"Удалено {len(ids_to_delete)} фрагментов из файла {file_name}",
-        })
+        return JSONResponse({"status": "success", "message": f"Удалено {len(ids)} фрагментов"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -2613,9 +2269,8 @@ async def delete_file_knowledge(file_name: str, request: Request):
 async def parse_url_endpoint(request: Request):
     parser_token = os.getenv("PARSER_TOKEN")
     if parser_token:
-        incoming = request.headers.get("x-parser-token")
-        if incoming != parser_token:
-            raise HTTPException(status_code=401, detail="invalid parser token")
+        if request.headers.get("x-parser-token") != parser_token:
+            raise HTTPException(status_code=401, detail="invalid token")
 
     try:
         body = await request.json()
@@ -2624,48 +2279,32 @@ async def parse_url_endpoint(request: Request):
 
     url = (body.get("url") or "").strip()
     if not url or not url.startswith(("http://", "https://")):
-        return JSONResponse({"error": "url is required"}, status_code=400)
+        return JSONResponse({"error": "url required"}, status_code=400)
 
-    print(f"🌐 [PARSE_URL] Запрос: {url}")
     text = await fetch_url_content(url)
-    print(f"🌐 [PARSE_URL] Отдаём {len(text)} символов")
-
     return JSONResponse({"url": url, "text": text, "ok": bool(text)})
 
 
 @app.get("/get_system_prompt")
 async def get_system_prompt(request: Request):
     verify_admin(request)
-    return JSONResponse({
-        "prompt": SYSTEM_PROMPT,
-        "length": len(SYSTEM_PROMPT),
-    })
+    return JSONResponse({"prompt": SYSTEM_PROMPT, "length": len(SYSTEM_PROMPT)})
 
 
 @app.post("/update_system_prompt")
 async def update_system_prompt(request: Request):
-    token = request.headers.get("x-admin-token")
-    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
-        raise HTTPException(status_code=401, detail="Неверный токен администратора")
-
+    if not ADMIN_TOKEN or request.headers.get("x-admin-token") != ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="unauthorized")
     try:
         body = await request.json()
         new_prompt = body.get("prompt", "").strip()
         if not new_prompt:
-            raise HTTPException(status_code=400, detail="Поле 'prompt' не может быть пустым")
-
+            raise HTTPException(status_code=400, detail="empty")
         global SYSTEM_PROMPT
         SYSTEM_PROMPT = new_prompt
-
         await save_system_prompt(new_prompt)
-
-        return JSONResponse({
-            "status": "success",
-            "message": "Системный промпт обновлён и сохранён в Qdrant",
-            "new_prompt_length": len(new_prompt),
-        })
+        return JSONResponse({"status": "success", "message": "OK"})
     except Exception as e:
-        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
