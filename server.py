@@ -805,8 +805,11 @@ async def get_embeddings_batch(texts: list[str], batch_size: int = 32) -> list:
     return results
 
 
+
 _JUNK_RE = re.compile(
-    r"\b(тест|проверка|привет|ты\s+тут|test|hello|hi|ок|ok)\b",
+    r"\b(тест|проверка|привет|ты\s+тут|test|hello|hi|ок|ok"
+    r"|как\s+дела|как\s+ты|как\s+сам|что\s+делаешь|чем\s+занят"
+    r"|здравствуй|добрый\s+день|добрый\s+вечер|доброе\s+утро|спасибо|благодарю)\b",
     re.IGNORECASE,
 )
 
@@ -817,7 +820,7 @@ def _is_junk_query(query: str) -> bool:
         print(f"⏭️ [SEARCH] Запрос короткий ({len(q_stripped)} симв.)")
         return True
     if len(query) < 40 and _JUNK_RE.search(query):
-        print(f"⏭️ [SEARCH] Похоже на тест")
+        print(f"⏭️ [SEARCH] Похоже на тест/приветствие — БЗ не ищем")
         return True
     return False
 
