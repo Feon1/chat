@@ -942,9 +942,9 @@ async def search_knowledge_max(query: str) -> str:
     priority_result = await search_priority(query)
     if priority_result:
         print(f"📄 [RAG] Приоритетный: {len(priority_result)} символов")
-        if len(priority_result) > 8000:
-            priority_result = priority_result[:8000] + "\n\n[Контекст сокращён]"
-            print(f"✂️ [RAG] Приоритетный обрезан до 8000")
+        if len(priority_result) > 5000:
+            priority_result = priority_result[:5000] + "\n\n[Контекст сокращён]"
+            print(f"✂️ [RAG] Приоритетный обрезан до 5000")
         return priority_result
 
     try:
@@ -986,9 +986,9 @@ async def search_knowledge_max(query: str) -> str:
 
     result = "\n\n".join(p.payload.get("text", "") for p in points if p.payload)
 
-    if len(result) > 8000:
-        result = result[:8000] + "\n\n[Контекст сокращён]"
-        print(f"✂️ [RAG] Контекст обрезан до 8000")
+    if len(result) > 5000:
+        result = result[:5000] + "\n\n[Контекст сокращён]"
+        print(f"✂️ [RAG] Контекст обрезан до 5000")
 
     return result
 
@@ -1425,7 +1425,8 @@ async def local_fallback(payload_text: str, user_id: str,
     total_chars = sum(len(m.get("content", "")) for m in messages)
     print(f"📨 [MSG] turns={len(messages)}, вход: {total_chars} симв. (~{total_chars // 2} токенов)")
 
-    answer, metrics = await call_llm(messages, temperature=0.7, max_tokens=2000, user_id=user_id)
+    max_tok = 3500 if is_channel else 2000
+    answer, metrics = await call_llm(messages, temperature=0.7, max_tokens=max_tok, user_id=user_id)
 
     # Если обе модели пусты — пробуем без БЗ
     if not answer or not answer.strip():
@@ -1435,7 +1436,7 @@ async def local_fallback(payload_text: str, user_id: str,
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": min_prompt},
         ]
-        answer, metrics = await call_llm(msgs2, temperature=0.7, max_tokens=1200, user_id=user_id)
+        answer, metrics = await call_llm(msgs2, temperature=0.7, max_tokens=2500, user_id=user_id)
 
     print(f"✅ [FALLBACK] {len(answer) if answer else 0} символов")
 
