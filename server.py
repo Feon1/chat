@@ -1803,6 +1803,11 @@ async def telegram_webhook(update: dict):
         from_info = message.get("from", {}) or {}
         sender_chat = message.get("sender_chat", {}) or {}
 
+        # === ФИЛЬТР АВТО-ФОРВАРДА ИЗ КАНАЛА В ОБСУЖДЕНИЕ ===
+        if message.get("is_automatic_forward"):
+            print("⏭️ [MESSAGE] Авто-форвард поста канала — игнорируем")
+            return {"ok": True}
+
         if BOT_ID and from_info.get("id") == BOT_ID:
             return {"ok": True}
         if sender_chat and sender_chat.get("type") == "channel":
