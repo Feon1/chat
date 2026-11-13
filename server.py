@@ -942,9 +942,9 @@ async def search_knowledge_max(query: str) -> str:
     priority_result = await search_priority(query)
     if priority_result:
         print(f"📄 [RAG] Приоритетный: {len(priority_result)} символов")
-        if len(priority_result) > 5000:
-            priority_result = priority_result[:5000] + "\n\n[Контекст сокращён]"
-            print(f"✂️ [RAG] Приоритетный обрезан до 5000")
+        if len(priority_result) > 6000:
+            priority_result = priority_result[:6000] + "\n\n[Контекст сокращён]"
+            print(f"✂️ [RAG] Приоритетный обрезан до 6000")
         return priority_result
 
     try:
@@ -986,9 +986,9 @@ async def search_knowledge_max(query: str) -> str:
 
     result = "\n\n".join(p.payload.get("text", "") for p in points if p.payload)
 
-    if len(result) > 5000:
-        result = result[:5000] + "\n\n[Контекст сокращён]"
-        print(f"✂️ [RAG] Контекст обрезан до 5000")
+    if len(result) > 6000:
+        result = result[:6000] + "\n\n[Контекст сокращён]"
+        print(f"✂️ [RAG] Контекст обрезан до 6000")
 
     return result
 
